@@ -51,7 +51,7 @@ while 1:
         if not FoundAccept:
             if re.match(line,aj):
                 FoundAccept = True
-                print("Vygeneruj Accept format A/J")
+                print("Vygeneruj Accept format A/J") # ciste jako string, do json to zpracuje TCP
             elif re.match(line,tp):
                 FoundAccept = True
                 print("Vygeneruj Accept format T/P")
