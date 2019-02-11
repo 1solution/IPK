@@ -8,11 +8,12 @@ import platform
 
 # ty regexy potom rozsir o ruzne znaky mezer atd.
 
+# re typ pozadavku
 hostname = re.compile("^GET \/hostname")
 cpuname = re.compile("^GET \/cpu-name")
 load = re.compile("^GET \/load ")
 loadr = re.compile("^GET \/load\?refresh=[0-9]+ ")
-
+# re typ accept
 tp = re.compile("^Accept: text\/plain$")
 aj = re.compile("^Accept: application\/json$")
 
@@ -22,32 +23,45 @@ s.listen(1)
 conn,address = s.accept() # conn = novy socket na ktery posilam, address = tuple ve formatu addr + port druhe strany
 
 while 1:
-    data = conn.recv(2048)
+    data = conn.recv(1024)
     if not data:
         break
-
-    conn.sendall(data)
-
     text = data.decode().split('\r\n')
 
-    # validace requestu
-    if re.match(text[0],hostname):
-        print(socket.gethostname())
-    elif re.match(text[0],cpuname):
-        print(platform.processor())
-    elif re.match(text[0],load):
-
-    elif re.match(text[0],loadr):
-
-    else:
-        # raise, except, spatny request
-
-    # zpracovani typu accept
-
-    if re.match(text[2],aj):
-
-    else: # byl zadan text/plain jiny typ accept, poslat defaultne text/plain # bacha accept tam vubec byt nemusi.
-        # json format: { "type" : "OK", "value":"25%" }
-
-
+    # bacha na poradi prvku nezalezi, testovat tedy postupne a potom pomoci t/f podminek overit ze vse proslo jak melo
+    
+    FoundType = False # zatim nenalezl na zadnem radku typ requestu
+    FoundAccept = False # zatim nenalezl na zadnem radku Accept type
+    
+    for line in text:
+        # validace typu requestu GET /.....
+        if not FoundType:
+            if re.match(line,hostname):
+                FoundType = True
+                print(socket.gethostname())
+            elif re.match(line,cpuname):
+                FoundType = True
+                print(platform.processor())
+            elif re.match(line,load):
+                FoundType = True
+                print("Vypocitej load")
+            elif re.match(line,loadr):
+                FoundType = True
+                print("Vypocitej load s refresh")
+        if not FoundAccept:
+            if re.match(line,aj):
+                FoundAccept = True
+                print("Vygeneruj Accept format A/J")
+            elif re.match(line,tp):
+                FoundAccept = True
+                print("Vygeneruj Accept format T/P")
+                
+    if FoundType and not FoundAccept: # typ nalezen, ale nebyl zadan Accept typ, poslat defaultne text/plain a odeslat
+        print("Vygeneruj Accept t/p")        
+    elif not FoundType: # nebyl nalezen typ, exception
+        print("Exception")
+    else: # nalezeny oba, odeslat
+        
+    # odesilani    
+    conn.sendall(data)
 
