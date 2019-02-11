@@ -12,6 +12,15 @@ class CpuError(Exception): # vlastni vyjimka, chyba pri volani lscpu
 class RequestError(Exception): # vlastni vyjimka, request ma blbou strukturu
     pass
 
+def refr(): # vytvor text request=, ktery posles s.send(request.encode()) 
+    #request = "POST / HTTP/1.1\nHost: " + server + "\nPath: " + path + "\n\n"
+    #s.connect((socket.gethostbyname(server),port))
+    #s.send(request.encode())
+    # Co v nem musi byt:
+    #HTTP/1.1 200 OK
+    #Refresh: 5; url=http://www.example.org/fresh-as-a-summer-breeze 
+    pass
+
 def getcpu(): # vraci % zatizeni cpu
     curr = re.compile("^CPU MHz:\s*[0-9]+\.[0-9]+$")
     max = re.compile("^CPU max MHz:\s*[0-9]+\.[0-9]+$")
@@ -56,37 +65,43 @@ try:
             break
         text = data.decode().split('\r\n')
         
+        CustomRequest = False
         ToJson = False # budeme prevadet na JSON
         FoundType = False # zatim nenalezl na zadnem radku typ requestu
         FoundAccept = False # zatim nenalezl na zadnem radku Accept type    
         for line in text:
             # validace typu requestu GET /.....
             if not FoundType:
+                
                 if re.match(line,hostname):
                     FoundType = True
                     typ = "hostname"
                     data = socket.gethostname()
+                    
                 elif re.match(line,cpuname):
                     FoundType = True
                     typ = "cpu"
                     data = platform.processor()
+                    
                 elif re.match(line,loadr):
                     FoundType = True
                     typ = "zatizeni"
                     data = getcpu()
                     if len(data) == 0:
                         raise CpuError
-                    # vyber refresh rate
                     refresh = [int(i) for i in re.findall(dec,line)]
                     if len(refresh) > 1:
                         raise RequestError
-                    refresh = refresh[0] # refresh rate pouzij pozdeji
+                    refresh = refresh[0] # vyber refresh rate
+                    CustomRequest = True # budes vytvaret vlastni textovy request k odeslani
+                    
                 elif re.match(line,load):
                     FoundType = True
                     typ = "zatizeni"
                     data = getcpu()
                     if len(data) == 0:
                         raise CpuError
+                        
             if not FoundAccept:
                 if re.match(line,aj):
                     FoundAccept = True
@@ -94,23 +109,25 @@ try:
                 elif re.match(line,tp):
                     FoundAccept = True
           
-        if (FoundType and FoundAccept) or (FoundType and not FoundAccept): # nalezeny oba, rid se podle typu Accept || nalezen jen typ, Accept automaticky na text/plain
+        if (FoundType and FoundAccept) or (FoundType and not FoundAccept): # nalezeny oba, rid se podle typu Accept || nalezen jen typ, Accept automaticky na text/plain          
             if ToJson: # preved na JSON, typ se nastavoval uz v analyze
                 data = "{ \"typ : " + typ + "\" , \"hodnota : " + data + "\" }"
-            conn.sendall(data)             
+            if CustomRequest: # vytvor kvuli refreshi vlastni textovy request a ten odesli
+                data = refr()
+            conn.sendall(data) # odeslani requestu         
         else: # nebyl nalezen typ, exception
             print("Nebyl nalezen typ requestu GET.")
 
 except socket.error:
-    print('xx')
+    print("Starsi obecna chyba.")
 except socket.herror:
-    print('xx')
+    print("Chybna adresa.")
 except socket.gaierror:
-    print('xx')
+    print("Chybna adresa.")
 except socket.timeout:
-    print('xx')
+    print("Vyprsel cas.")
 except InterruptedError:
-    print('xx')
+    print("Doslo k preruseni.")
 except CpuError:
     print("Chyba pri volani lscpu.")
 except RequestError:
