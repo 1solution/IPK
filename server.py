@@ -44,97 +44,98 @@ aj = re.compile("^Accept:\s+application\/json$.*$")
 # dec cislo, vyhledani refresh rate v radku
 dec = re.compile("\d+")
 
-arg_address = "merlin.fit.vutbr.cz" # argument z make
-arg_port = 12225 # argument z make
+arg_address = "100.65.70.178" # argument z make
+arg_port = 12345 # argument z make
 
 try:
-    s = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
-    s.bind((arg_address,arg_port))
-    s.listen(1)
-    client,address = s.accept() # conn = socket na druhe strane, address = tuple ve formatu addr + port druhe strany
+    while True:
+        s = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+        s.bind((arg_address,arg_port))
+        s.listen(1)
+        client,address = s.accept() # conn = socket na druhe strane, address = tuple ve formatu addr + port druhe strany
+        
+        while True:
+            data = client.recv(1024)
+            if not data:
+                break
+            text = data.decode().split('\r\n')
     
-    while 1:
-        data = client.recv(1024)
-        if not data:
-            break
-        text = data.decode().split('\r\n')
-
-        CustomRequest = False
-        ToJson = False # budeme prevadet na JSON
-        FoundType = False # zatim nenalezl na zadnem radku typ requestu
-        FoundAccept = False # zatim nenalezl na zadnem radku Accept type    
-        for line in text:
-            # validace typu requestu GET /.....
-            if not FoundType:
-                
-                if re.match(hostname,line): # vrat hostname
-                    FoundType = True
-                    typ = "hostname"
-                    data = socket.gethostname()
+            CustomRequest = False
+            ToJson = False # budeme prevadet na JSON
+            FoundType = False # zatim nenalezl na zadnem radku typ requestu
+            FoundAccept = False # zatim nenalezl na zadnem radku Accept type    
+            for line in text:
+                # validace typu requestu GET /.....
+                if not FoundType:
                     
-                elif re.match(cpuname,line): # vrat nazev cpu
-                    FoundType = True
-                    typ = "cpu"
-                    cpuinfo = subprocess.Popen(["cat /proc/cpuinfo"], stdout=subprocess.PIPE, bufsize=1, universal_newlines=True)
-                    output = cpuinfo.communicate()[0]
-                    text = output.split('\n')
-                    model = re.compile("^model name.*$")
-                    model_name = re.compile("(?<=: ).*$")
-                    for t in text:
-                        print(t)
-                        if re.match(model,t):
-                            print('NALEZENO.')
-                            data = re.findall(model_name,t)
-                            data = data[0]
-                            break
-
-                elif re.match(loadr,line): # vrat zatez a do Accept pridej refresh
-                    FoundType = True
-                    typ = "zatizeni"
-                    data = getcpu()
-                    if len(data) == 0:
-                        raise CpuError
-                    refresh = [int(i) for i in re.findall(dec,line)]
-                    if len(refresh) > 1:
-                        raise RequestError
-                    refresh = refresh[0] # vyber refresh rate
-                    CustomRequest = True # budes vytvaret vlastni textovy request k odeslani
-                    
-                elif re.match(load,line): # vrat zatez
-                    FoundType = True
-                    typ = "zatizeni"
-                    data = getcpu()
-                    if len(data) == 0:
-                        raise CpuError
+                    if re.match(hostname,line): # vrat hostname
+                        FoundType = True
+                        typ = "hostname"
+                        data = socket.gethostname()
                         
-            if not FoundAccept:
-                if re.match(aj,line):
-                    FoundAccept = True
-                    ToJson = True
-                elif re.match(tp,line):
-                    FoundAccept = True
-          
-        if (FoundType and FoundAccept) or (FoundType and not FoundAccept): # nalezeny oba, rid se podle typu Accept || nalezen jen typ, Accept automaticky na text/plain          
-            if ToJson: # preved na JSON, typ se nastavoval uz v analyze
-                data = "{ \"typ : " + typ + "\" , \"hodnota : " + data + "\" }"
-                content_type = "application/json"
-            else:
-                content_type = "text/plain"
-
-            if CustomRequest: # vytvor POST request s refresh
-                refr_string = "Refresh: " + refresh + "; " + arg_address + ":" + str(arg_port) + "/load?refresh=" + refresh + "\n"
-            else: # vytvor obycejny POST request
-                refr_string = ''
-            #outcoming = "POST / HTTP/1.1\n" + refr_string + "Host: " + arg_address + ":" + str(arg_port) + " \nContent-Type: " + content_type + "\nContent-Length: " + str(len(data)) + "\n\n" + data
-            outcoming = data
-            client.sendall(outcoming.encode()) # odeslani requestu
-        else: # nebyl nalezen typ, exception
-            print("Nebyl nalezen typ requestu GET.")
-        client.close()
-    s.close()
+                    elif re.match(cpuname,line): # vrat nazev cpu
+                        FoundType = True
+                        typ = "cpu"
+                        cpuinfo = subprocess.Popen(["cat /proc/cpuinfo"], stdout=subprocess.PIPE, bufsize=1, universal_newlines=True)
+                        output = cpuinfo.communicate()[0]
+                        text = output.split('\n')
+                        model = re.compile("^model name.*$")
+                        model_name = re.compile("(?<=: ).*$")
+                        for t in text:
+                            print(t)
+                            if re.match(model,t):
+                                print('NALEZENO.')
+                                data = re.findall(model_name,t)
+                                data = data[0]
+                                break
+    
+                    elif re.match(loadr,line): # vrat zatez a do Accept pridej refresh
+                        FoundType = True
+                        typ = "zatizeni"
+                        data = getcpu()
+                        if len(data) == 0:
+                            raise CpuError
+                        refresh = [int(i) for i in re.findall(dec,line)]
+                        if len(refresh) > 1:
+                            raise RequestError
+                        refresh = refresh[0] # vyber refresh rate
+                        CustomRequest = True # budes vytvaret vlastni textovy request k odeslani
+                        
+                    elif re.match(load,line): # vrat zatez
+                        FoundType = True
+                        typ = "zatizeni"
+                        data = getcpu()
+                        if len(data) == 0:
+                            raise CpuError
+                            
+                if not FoundAccept:
+                    if re.match(aj,line):
+                        FoundAccept = True
+                        ToJson = True
+                    elif re.match(tp,line):
+                        FoundAccept = True
+              
+            if (FoundType and FoundAccept) or (FoundType and not FoundAccept): # nalezeny oba, rid se podle typu Accept || nalezen jen typ, Accept automaticky na text/plain          
+                if ToJson: # preved na JSON, typ se nastavoval uz v analyze
+                    data = "{ \"typ : " + typ + "\" , \"hodnota : " + data + "\" }"
+                    content_type = "application/json"
+                else:
+                    content_type = "text/plain"
+    
+                if CustomRequest: # vytvor POST request s refresh
+                    refr_string = "Refresh: " + refresh + "; " + arg_address + ":" + str(arg_port) + "/load?refresh=" + refresh + "\n"
+                else: # vytvor obycejny POST request
+                    refr_string = ''
+                #outcoming = "POST / HTTP/1.1\n" + refr_string + "Host: " + arg_address + ":" + str(arg_port) + " \nContent-Type: " + content_type + "\nContent-Length: " + str(len(data)) + "\n\n" + data
+                outcoming = data
+                client.sendall(outcoming.encode()) # odeslani requestu
+            else: # nebyl nalezen typ, exception
+                print("Nebyl nalezen typ requestu GET.")
+            client.close()
+        s.close()
 
 except socket.error:
-    print("Starsi obecna chyba.")
+    print("Cyba pri vytvareni socketu.")
 except socket.herror:
     print("Chybna adresa.")
 except socket.gaierror:
