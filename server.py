@@ -6,12 +6,17 @@ import platform # je tu kvuli nazvu procesoru
 import subprocess # je tu kvuli spusteni lscpu
 import sys # je tu kvuli argv[1]
 
-# odladit blbosti jako spatny argument, cas refresh mimo vteriny, fakeregexy apod.
+# dodelej regexy na accept type
+# odladit blbosti jako spatny argument
 # napsat manual MD
-# 400, 408, nahrad celkove chyby odeslanim respond na clienta misto print()
+# 400, 408, nahrad celkove chyby odeslanim respond na clienta misto print()  zjisti kde dal mas posilat requesty misto printu v exceptions
 
 if len(sys.argv) is not 2: # test na argumenty
     print("Spatne argumenty.")
+    sys.exit(1)
+
+if not isinstance(sys.argv[1],int) or not sys.argv[1] > 1023 or not sys.argv[1] < 65536: # test na port
+    print("Spatne cislo portu nebo spatny format cisla portu")
     sys.exit(1)
 
 class CpuError(Exception): # vlastni vyjimka, chyba pri volani lscpu
@@ -42,24 +47,23 @@ def getcpu(): # vraci % zatizeni cpu
         return ''
 
 # re typ pozadavku
-hostname = re.compile("^GET\s+\/hostname(\s+\w+.*)*") # bacha, u tech regexu to nejspis muze byt soucasti dalsiho radku..
-cpuname = re.compile("^GET\s+\/cpu-name(\s+\w+.*)*")
-load = re.compile("^GET\s+\/load(\s+\w+.*)*")
-loadr = re.compile("^GET\s+\/load\?refresh=[0-9]+(\s+\w+.*)")
+hostname = re.compile("^GET\s+\/hostname\s+HTTP\/[0-9]\.[0-9]\s*$") # bacha, u tech regexu to nejspis muze byt soucasti dalsiho radku..
+cpuname = re.compile("^GET\s+\/cpu-name\s+HTTP\/[0-9]\.[0-9]\s*$")
+load = re.compile("^GET\s+\/load\s+HTTP\/[0-9]\.[0-9]\s*$")
+loadr = re.compile("^GET\s+\/load\?refresh=[0-9]+\s+HTTP\/[0-9]\.[0-9]\s*$")
 
 # re typ ignore
 icon = re.compile("^GET\s+\/favicon.ico(\s+\w+.*)*")
 
 # re typ accept
-tp = re.compile("^Accept:\s+text\/plain(\s+\w+.*)*")
-aj = re.compile("^Accept:\s+application\/json(\s+\w+.*)*")
+tp = re.compile("^Accept:\s*text\/plain(\s+\w+.*)*")
+aj = re.compile("^Accept:\s*application\/json(\s+\w+.*)*")
 # dec cislo, vyhledani refresh rate v radku
 dec = re.compile("\d+")
 
 try:
     s = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
     arg_address = ''.join(socket.gethostbyname_ex(socket.gethostname())[2]) # lokalni server
-    print(arg_address)    
     arg_port = sys.argv[1] # argument z make
     s.bind((arg_address, int(arg_port)))
 except socket.error:
@@ -131,26 +135,32 @@ else:
                     elif re.match(tp,line):
                         FoundAccept = True
 
-            if FoundType: # nalezeny oba, rid se podle typu Accept || nalezen jen typ, Accept automaticky na text/plain
-                if ToJson: # preved na JSON, typ se nastavoval uz v analyze
-                    data = "{ \"typ : " + typ + "\" , \"hodnota : " + data + "\" }\n"
-                    content_type = "application/json"
-                else:
-                    content_type = "text/plain"
+            # processing vypisu START
+            Browser = False
+            for line in text: # zkus jestli to neni nahodou browserem, co posila dalsi specificke GET, favicon napriklad..
+                if re.match(icon,line):
+                    Browser = True
 
-                if CustomRequest: # vytvor odpoved s refresh
-                    refr_string = "Refresh: " + refresh + ";url=http://" + arg_address + ":" + str(arg_port) + "/load?refresh=" + refresh + "\n"
-                else: # vytvor obycejnou odpoved request
-                    refr_string = ''
-                outcoming = "HTTP/1.1 200 OK\n" + refr_string + "Content-type:" + content_type + "\nContent-Length: " + str(len(data)) + "\r\n\r\n" + data + '\n'
+            if not FoundType: # nebyl nalezen typ, ale budes posilat 400 JSON
+                data = "Spatny typ requestu"
+                typ = "Chyba"
+
+            if ToJson: # preved na JSON a nastaveni typu
+                data = "{ \"typ : " + typ + "\" , \"hodnota : " + data + "\" }\n"
+                content_type = "application/json"
+            else:
+                content_type = "text/plain"
+
+            if not Browser: # nebylo to browserem (favicon..)
+                if FoundType: # typ byl nalezen, jedna se o validni request a bude se odesilat 200
+                    if CustomRequest: # vytvor odpoved s refresh
+                        refr_string = "Refresh: " + refresh + ";url=http://" + arg_address + ":" + str(arg_port) + "/load?refresh=" + refresh + "\n"
+                    else: # vytvor obycejnou odpoved request
+                        refr_string = ''
+                    outcoming = "HTTP/1.1 200 OK\n" + refr_string + "Content-type:" + content_type + "\nContent-Length: " + str(len(data)) + "\r\n\r\n" + data + '\n'
+                else: # typ nenalezen, jedna se o nevalidni request a posle se 400
+                    outcoming = "HTTP/1.1 400 Bad Request\nContent-type:" + content_type + "\nContent-Length: " + str(len(data)) + "\r\n\r\n" + data + '\n'
                 client.sendall(outcoming.encode()) # odeslani requestu
-            else: # nebyl nalezen typ. Predpokladejme ze validnich requestu je vic nez nevalidnich
-                for line in text: # zkus jestli to neni nahodou browserem, co posila dalsi specificke GET
-                    if re.match(icon,line):
-                        Browser = True
-                if not Browser: # jednalo se opravdu o spatny typ
-                    print("Nebyl nalezen typ requestu GET.")
-                    break
             client.close()
         except socket.herror:
             print("Chybna adresa.")
