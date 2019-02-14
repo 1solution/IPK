@@ -5,36 +5,28 @@ import re # je tu kvuli regexum pri zpracovani lscpu
 import platform # je tu kvuli nazvu procesoru
 import subprocess # je tu kvuli spusteni lscpu
 import sys # je tu kvuli argv[1]
-import json
-# napsat manual MD
+import json # prevod data na json objekt
 
-if len(sys.argv) is not 2: # test na argumenty
+if len(sys.argv) is not 2: # test na pocet argumentu
     print("Spatne argumenty.")
     sys.exit(1)
-
 port = int(sys.argv[1])
-
 if not isinstance(port,int) or port < 1024 or port > 65535: # test na port
     print("Spatne cislo portu nebo spatny format cisla portu")
     sys.exit(1)
 
-class CpuError(Exception): # vlastni vyjimka, chyba pri volani lscpu
-    pass
-class RequestError(Exception): # vlastni vyjimka, request ma blbou strukturu
-    pass
-
 def getcpu(): # vraci % zatizeni cpu
-    curr = re.compile("^CPU MHz:\s*[0-9]+[\,,\.][0-9]+$")
-    max = re.compile("^CPU max MHz:\s*[0-9]+[\,,\.][0-9]+$")
-    fl = re.compile("\d+.?\d+")
+    curr = re.compile("^CPU MHz:\s*[0-9]+[\,,\.][0-9]+$") # dostan maximum
+    max = re.compile("^CPU max MHz:\s*[0-9]+[\,,\.][0-9]+$") # dostan current stav
+    fl = re.compile("\d+.?\d+") # k hledani vsech pouzitelnych cisel
     foundcurr = False
     foundmax = False
-    test = subprocess.Popen(["lscpu"], stdout=subprocess.PIPE, bufsize=1, universal_newlines=True)
+    test = subprocess.Popen(["lscpu"], stdout=subprocess.PIPE, bufsize=1, universal_newlines=True) # spust podproces
     output = test.communicate()[0]    
     text = output.split('\n')
     for t in text:
         if re.match(max,t):
-            maxlist = [w.replace(',','.') for w in re.findall(fl,t)]
+            maxlist = [w.replace(',','.') for w in re.findall(fl,t)] # defaultne je tam v tom cisle carka, tak proto
             maxlist = [float(i) for i in maxlist]
             foundmax = True
         elif re.match(curr,t):
@@ -43,58 +35,54 @@ def getcpu(): # vraci % zatizeni cpu
     if foundmax and foundcurr:
         return str(int(currlist[0]/maxlist[0]*100)) + '%'
     else:
-        return ''
+        return '' # neco se rozbilo
 
+## REGEX ##
+# vim ze je jich hodne, ale je to jedinej rozumnej a zaroven spolehlivej zpusob jak zjistit obsah toho http header
 # re typ pozadavku
 isrequest = re.compile("^(GET|POST|HEAD|PUT|DELETE|CONNECT|OPTION|TRACE)\s+\/\S*\s+HTTP\/[0-9]\.[0-9]\s*$") # pokud nesedi sablone zadneho requestu, odeslat 400
 isgetrequest = re.compile("^GET\s+\/\S*\s+HTTP\/[0-9]\.[0-9]\s*$") # musi sedet sablone get requestu, pokud ne odeslat 405
-
 # jednotlive typy vyhovujici get requestu
-hostname = re.compile("^GET\s+\/hostname\s+HTTP\/[0-9]\.[0-9]\s*$") # bacha, u tech regexu to nejspis muze byt soucasti dalsiho radku..
+hostname = re.compile("^GET\s+\/hostname\s+HTTP\/[0-9]\.[0-9]\s*$")
 cpuname = re.compile("^GET\s+\/cpu-name\s+HTTP\/[0-9]\.[0-9]\s*$")
 load = re.compile("^GET\s+\/load\s+HTTP\/[0-9]\.[0-9]\s*$")
 loadr = re.compile("^GET\s+\/load\?refresh=[0-9]+\s+HTTP\/[0-9]\.[0-9]\s*$")
-
 # re typ ignore (browser)
 icon = re.compile("^GET\s+\/favicon.ico(\s+\w+.*)*")
-
 # re typ accept
 all_accept = re.compile("^Accept:\s*\*\/\*\s*$") # */*
 tp_accept = re.compile("^Accept:\s*text\/(plain|\*)\s*$") # text/* || text/plain
 aj_accept = re.compile("^Accept:\s*application\/(json|\*)\s*$") # application/json || application/*
-no_accept = re.compile("^Accept:\s*\S+\/\S+\s*$") # jakykoliv dalsi Accept, pokud nebyly nalezeny ty predchozi
-
+some_accept = re.compile("^Accept:\s*\S+\/\S+\s*$") # jakykoliv dalsi Accept, pokud nebyly nalezeny ty predchozi
 # dec cislo, vyhledani refresh rate v radku
 dec = re.compile("\d+")
 
 try:
-    s = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
-    arg_address = ''.join(socket.gethostbyname_ex(socket.gethostname())[2]) # lokalni server
-    arg_port = sys.argv[1] # argument z make
+    s = socket.socket(socket.AF_INET,socket.SOCK_STREAM) # vytvor socket
+    arg_address = ''.join(socket.gethostbyname_ex(socket.gethostname())[2]) # host
+    arg_port = sys.argv[1] # port
     s.bind((arg_address, int(arg_port)))
 except socket.error:
     print("Chyba pri vytvareni socketu.")
 else:
     s.listen(0)
-
     while True:
         try:
-            client,address = s.accept() # conn = socket na druhe strane, address = tuple ve formatu addr + port druhe strany
-
-            data = client.recv(1024)
+            client,address = s.accept() # client = socket na druhe strane, address = tuple ve formatu addr + port druhe strany
+            data = client.recv(1024) # buffer = 1024 default
             if not data:
                 client.close()
                 break
-            text = data.decode().split('\r\n')
+            text = data.decode().split('\r\n') # obsah requestu v listu
 
+            # validacni promenne
             IsRequest = False # jestli je to vubec request, jestli ne odesli 400
             IsGetRequest = False # jedna se o GET request, otazka je s jakou adresou
-
             RefreshRequest = False # soucasti response bude refresh
             ToJson = False # budeme prevadet na JSON
             FoundType = False # zatim nenalezl na zadnem radku typ requestu
             AllAccept = False # request obsahuje Accept type */*
-            NoAccept = True # nebyl nalezen vubec zadny typ Accept
+            SomeAccept = False # je tam nejaky jiny typ Accept nez vsechny validni typy. Defaultne predpokladejme ze tam zadny Accept typ neni
             FoundAccept = False # zatim nenalezl na zadnem radku Accept type
             CpuError = False # odeslat 500, vnitrni chyba serveru pri zpracovani cpuinfo
             Browser = False # browser request: favicon etc.
@@ -111,14 +99,13 @@ else:
                     elif re.match(tp_accept, line):
                         FoundAccept = True
                     elif re.match(all_accept, line):
+                        FoundAccept = True
                         AllAccept = True
-
-                if not FoundAccept: # pokus o nalezeni vubec nejakeho Accept typu
-                    for line in text:
-                        if re.match(no_accept, line):
-                            NoAccept = False
-                            break
-
+            if not FoundAccept: # pokus o nalezeni vubec nejakeho Accept typu
+                for line in text:
+                    if re.match(some_accept, line):
+                        SomeAccept = True
+                        break
             if IsRequest and IsGetRequest: # jedna se o GET request. aby se netestovalo zbytecne na neco co neni request
                 for line in text:
                     if re.match(icon, line):
@@ -163,7 +150,7 @@ else:
                                 FoundType = False
                                 CpuError = True
 
-            ##### processing vypisu: START
+            ##### processing vypisu: START #####
 
             # odchyceni chyb
             if IsRequest:
@@ -171,7 +158,7 @@ else:
                     if not FoundType: # nebyl nalezen typ, ale budes posilat 404 (text nebo JSON)
                         data = "Obsah nenalezen"
                         typ = "Chyba"
-                    elif not NoAccept: # spatny typ Accept, odesilas 406
+                    elif SomeAccept: # spatny typ Accept, odesilas 406
                         typ = "Chyba"
                         data = "spatny Accept typ obsahu"
                     elif CpuError: # Cpu error, nahrad typ chyby, odesilas 500
@@ -192,18 +179,21 @@ else:
                 str_length = '' # delku u JSONu neudavat
             else: # nalezen typ text nebo nebyl nalezen, takze posilam text. Nebo pripad kdy byl nalezen jiny typ nez Json
                 content_type = "text/plain"
+                data = data + '\n' # pridej novy radek kvuli terminalu
                 str_length = "\nContent-Length: " + str(len(data)) # delka dat u text/plain
+
+            ##### processing vypisu: FAKTICKE ODESLANI DAT #####
 
             if not Browser: # nebylo to browserem (favicon..)
                 if FoundType: # typ byl nalezen
-                    if not NoAccept:  # odesilas 406, spatny typ Accept
+                    if SomeAccept:  # odesilas 406, spatny typ Accept
                         outcoming = "HTTP/1.1 406 Not Acceptable\nContent-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
                     elif CpuError:  # Cpu error, odesilas 500
                         outcoming = "HTTP/1.1 500 Internal Server Error\nContent-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
                     else: # validni request, odesli 200
                         if RefreshRequest: # vytvor odpoved s refresh
                             refr_string = "Refresh: " + refresh + ";url=http://" + arg_address + ":" + str(arg_port) + "/load?refresh=" + refresh + "\n"
-                        else: # vytvor obycejnou odpoved
+                        else: # vytvor obyc-ejnou odpoved
                             refr_string = ''
                         outcoming = "HTTP/1.1 200 OK\n" + refr_string + "Content-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
                 else: # typ nenalezen, jedna se o nevalidni request a resi se chyby
@@ -226,4 +216,4 @@ else:
             print(e)
         except socket.timeout as e:
             print(e)
-    s.close()
+    s.close() # uzavri spojeni, porad jsme ale ve smycce
