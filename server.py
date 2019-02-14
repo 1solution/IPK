@@ -5,11 +5,10 @@ import re # je tu kvuli regexum pri zpracovani lscpu
 import platform # je tu kvuli nazvu procesoru
 import subprocess # je tu kvuli spusteni lscpu
 import sys # je tu kvuli argv[1]
+import json
 
 # dodelej regexy na accept type
-# odladit blbosti jako spatny argument
 # napsat manual MD
-# 400, 408, nahrad celkove chyby odeslanim respond na clienta misto print()  zjisti kde dal mas posilat requesty misto printu v exceptions
 
 if len(sys.argv) is not 2: # test na argumenty
     print("Spatne argumenty.")
@@ -85,6 +84,7 @@ else:
             ToJson = False # budeme prevadet na JSON
             FoundType = False # zatim nenalezl na zadnem radku typ requestu
             FoundAccept = False # zatim nenalezl na zadnem radku Accept type
+            CpuError = False # odeslat 500, vnitrni chyba serveru pri zpracovani cpuinfo
 
             for line in text:
                 # validace typu requestu GET /.....
@@ -113,20 +113,24 @@ else:
                         FoundType = True
                         typ = "zatizeni"
                         data = getcpu()
-                        if len(data) == 0:
-                            raise CpuError
-                        refresh = re.findall(dec,line)
-                        if not refresh[0]:
-                            raise RequestError
-                        refresh = refresh[0] # vyber refresh rate
-                        CustomRequest = True # budes vytvaret vlastni textovy request k odeslani
+                        if len(data) == 0: # budes vracet 500
+                            FoundType = False
+                            CpuError = True
+                        else:
+                            refresh = re.findall(dec,line)
+                            if not refresh[0]: # request ma spatnou strukturu, 400
+                                FoundType = False
+                            else:
+                                refresh = refresh[0] # vyber refresh rate
+                                CustomRequest = True # budes vytvaret vlastni textovy request k odeslani
 
                     elif re.match(load,line): # vrat zatez
                         FoundType = True
                         typ = "zatizeni"
                         data = getcpu()
-                        if len(data) == 0:
-                            raise CpuError
+                        if len(data) == 0: # budes vracet 500
+                            FoundType = False
+                            CpuError = True
 
                 if not FoundAccept:
                     if re.match(aj,line):
@@ -145,11 +149,17 @@ else:
                 data = "Spatny typ requestu"
                 typ = "Chyba"
 
+            if CpuError: # Cpu error, nahrad typ chyby, odesilas 500
+                data = "Vnitrni chyba serveru"
+
             if ToJson: # preved na JSON a nastaveni typu
-                data = "{ \"typ : " + typ + "\" , \"hodnota : " + data + "\" }\n"
+                data = "{ \"typ : " + typ + "\" , \"hodnota : " + data + "\" }"
+                data = json.dumps(data)
                 content_type = "application/json"
+                json_length = '' # delku davat jen k text/plain, u JSONu nedavat
             else:
                 content_type = "text/plain"
+                json_length = "\nContent-Length: " + str(len(data)) # delka dat u text/plain
 
             if not Browser: # nebylo to browserem (favicon..)
                 if FoundType: # typ byl nalezen, jedna se o validni request a bude se odesilat 200
@@ -157,24 +167,14 @@ else:
                         refr_string = "Refresh: " + refresh + ";url=http://" + arg_address + ":" + str(arg_port) + "/load?refresh=" + refresh + "\n"
                     else: # vytvor obycejnou odpoved request
                         refr_string = ''
-                    outcoming = "HTTP/1.1 200 OK\n" + refr_string + "Content-type:" + content_type + "\nContent-Length: " + str(len(data)) + "\r\n\r\n" + data + '\n'
-                else: # typ nenalezen, jedna se o nevalidni request a posle se 400
-                    outcoming = "HTTP/1.1 400 Bad Request\nContent-type:" + content_type + "\nContent-Length: " + str(len(data)) + "\r\n\r\n" + data + '\n'
+                    outcoming = "HTTP/1.1 200 OK\n" + refr_string + "Content-type:" + content_type + json_length + "\r\n\r\n" + data + '\n'
+                else: # typ nenalezen, jedna se o nevalidni request a posle se 400 nebo 500
+                    if CpuError: # odesilas 500
+                        outcoming = "HTTP/1.1 500 Internal server error\nContent-type:" + content_type + json_length + "\r\n\r\n" + data + '\n'
+                    else: # odesilas 400
+                        outcoming = "HTTP/1.1 400 Bad Request\nContent-type:" + content_type + json_length + "\r\n\r\n" + data + '\n'
                 client.sendall(outcoming.encode()) # odeslani requestu
             client.close()
-        except socket.herror:
-            print("Chybna adresa.")
-            break
-        except socket.gaierror:
-            print("Chybna adresa.")
-            break
-        except socket.timeout:
-            print("Vyprsel cas.")
-            break
-        except CpuError:
-            print("Chyba pri volani lscpu.")
-            break
-        except RequestError:
-            print("Request ma spatnou strukturu.")
-            break
+        except socket.herror as e or socket.gaierror as e or socket.timeout as e: # osetri vyjimky, chyba host, chyba adresy a timeout pri vytvareni
+            print(e)
     s.close()
