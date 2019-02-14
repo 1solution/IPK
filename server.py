@@ -59,9 +59,10 @@ loadr = re.compile("^GET\s+\/load\?refresh=[0-9]+\s+HTTP\/[0-9]\.[0-9]\s*$")
 icon = re.compile("^GET\s+\/favicon.ico(\s+\w+.*)*")
 
 # re typ accept
-diff_accept = re.compile("^Accept:\s*\S+\/\S+\s*$")
-tp_accept = re.compile("^Accept:\s*text\/plain\s*$")
-aj_accept = re.compile("^Accept:\s*application\/json\s*$")
+all_accept = re.compile("^Accept:\s*\*\/\*\s*$") # */*
+tp_accept = re.compile("^Accept:\s*text\/(plain|\*)\s*$") # text/* || text/plain
+aj_accept = re.compile("^Accept:\s*application\/(json|\*)\s*$") # application/json || application/*
+no_accept = re.compile("^Accept:\s*\S+\/\S+\s*$") # jakykoliv dalsi Accept, pokud nebyly nalezeny ty predchozi
 
 # dec cislo, vyhledani refresh rate v radku
 dec = re.compile("\d+")
@@ -92,7 +93,8 @@ else:
             RefreshRequest = False # soucasti response bude refresh
             ToJson = False # budeme prevadet na JSON
             FoundType = False # zatim nenalezl na zadnem radku typ requestu
-            DiffAccept = False # request obsahuje jiny nez podporovane typy Accept
+            AllAccept = False # request obsahuje Accept type */*
+            NoAccept = True # nebyl nalezen vubec zadny typ Accept
             FoundAccept = False # zatim nenalezl na zadnem radku Accept type
             CpuError = False # odeslat 500, vnitrni chyba serveru pri zpracovani cpuinfo
             Browser = False # browser request: favicon etc.
@@ -108,12 +110,14 @@ else:
                         ToJson = True
                     elif re.match(tp_accept, line):
                         FoundAccept = True
+                    elif re.match(all_accept, line):
+                        AllAccept = True
 
-            if not FoundAccept: # druhy pokus, pokud hledani nevyslo pro accept typ json ani text, zkus najit alespon nejaky accept
-                for line in text:
-                    if re.match(diff_accept,line):
-                        DiffAccept = True # naslo to typ accept, ktery neni podporovany
-                        break
+                if not FoundAccept: # pokus o nalezeni vubec nejakeho Accept typu
+                    for line in text:
+                        if re.match(no_accept, line):
+                            NoAccept = False
+                            break
 
             if IsRequest and IsGetRequest: # jedna se o GET request. aby se netestovalo zbytecne na neco co neni request
                 for line in text:
@@ -167,7 +171,7 @@ else:
                     if not FoundType: # nebyl nalezen typ, ale budes posilat 404 (text nebo JSON)
                         data = "Obsah nenalezen"
                         typ = "Chyba"
-                    elif DiffAccept: # spatny typ Accept, odesilas 406
+                    elif not NoAccept: # spatny typ Accept, odesilas 406
                         typ = "Chyba"
                         data = "spatny Accept typ obsahu"
                     elif CpuError: # Cpu error, nahrad typ chyby, odesilas 500
@@ -180,21 +184,19 @@ else:
                 typ = "Chyba"
                 data = "Spatna syntaxe requestu"
 
-            # validace typu accept
-            if DiffAccept: # byl nalezen jiny typ nez json nebo text
-                content_type = "text/plain"
-            elif ToJson: # nalezen typ json
+            # prevod dat na json tam, kde ma byt json
+            if ToJson: # nalezen typ json
                 data = "{ \"typ : " + typ + "\" , \"hodnota : " + data + "\" }"
                 data = json.dumps(data)
                 content_type = "application/json"
                 str_length = '' # delku u JSONu neudavat
-            else: # nalezen typ text nebo nebyl nalezen, takze posilam text
+            else: # nalezen typ text nebo nebyl nalezen, takze posilam text. Nebo pripad kdy byl nalezen jiny typ nez Json
                 content_type = "text/plain"
                 str_length = "\nContent-Length: " + str(len(data)) # delka dat u text/plain
 
             if not Browser: # nebylo to browserem (favicon..)
                 if FoundType: # typ byl nalezen
-                    if DiffAccept:  # odesilas 406, spatny typ Accept
+                    if not NoAccept:  # odesilas 406, spatny typ Accept
                         outcoming = "HTTP/1.1 406 Not Acceptable\nContent-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
                     elif CpuError:  # Cpu error, odesilas 500
                         outcoming = "HTTP/1.1 500 Internal Server Error\nContent-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
