@@ -40,15 +40,15 @@ def getcpu(): # vraci % zatizeni cpu
 ## REGEX ##
 # vim ze je jich hodne, ale je to jedinej rozumnej a zaroven spolehlivej zpusob jak zjistit obsah toho http header
 # re typ pozadavku
-isrequest = re.compile("^(GET|POST|HEAD|PUT|DELETE|CONNECT|OPTION|TRACE)\s+\/\S*\s+HTTP\/[0-9]\.[0-9]\s*$") # pokud nesedi sablone zadneho requestu, odeslat 400
-isgetrequest = re.compile("^GET\s+\/\S*\s+HTTP\/[0-9]\.[0-9]\s*$") # musi sedet sablone get requestu, pokud ne odeslat 405
+isrequest = re.compile("^(GET|POST|HEAD|PUT|DELETE|CONNECT|OPTION|TRACE) \/\S* HTTP\/[0-9]\.[0-9]\r\n$") # pokud nesedi sablone zadneho requestu, odeslat 400
+isgetrequest = re.compile("^GET \/\S* HTTP\/[0-9]\.[0-9]\r\n$") # musi sedet sablone get requestu, pokud ne odeslat 405
 # jednotlive typy vyhovujici get requestu
-hostname = re.compile("^GET\s+\/hostname\s+HTTP\/[0-9]\.[0-9]\s*$")
-cpuname = re.compile("^GET\s+\/cpu-name\s+HTTP\/[0-9]\.[0-9]\s*$")
-load = re.compile("^GET\s+\/load\s+HTTP\/[0-9]\.[0-9]\s*$")
-loadr = re.compile("^GET\s+\/load\?refresh=[0-9]+\s+HTTP\/[0-9]\.[0-9]\s*$")
+hostname = re.compile("^GET \/hostname HTTP\/[0-9]\.[0-9]\r\n$")
+cpuname = re.compile("^GET \/cpu-name HTTP\/[0-9]\.[0-9]\r\n$")
+load = re.compile("^GET \/load HTTP\/[0-9]\.[0-9]\r\n$")
+loadr = re.compile("^GET \/load\?refresh=[0-9]+ HTTP\/[0-9]\.[0-9]\r\n$")
 # re typ ignore (browser)
-icon = re.compile("^GET\s+\/favicon.ico(\s+\w+.*)*")
+icon = re.compile("^GET \/favicon.ico(\s+\w+.*)*")
 # re typ accept
 all_accept = re.compile("^Accept:\s*\*\/\*\s*$") # */*
 tp_accept = re.compile("^Accept:\s*text\/(plain|\*)\s*$") # text/* || text/plain
