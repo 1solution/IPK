@@ -35,7 +35,7 @@ def getcpu(): # vraci % zatizeni cpu
     if foundmax and foundcurr:
         return str(int(currlist[0]/maxlist[0]*100)) + '%'
     else:
-        return '' # neco se rozbilo
+        return '' # neco se rozbilo, 500
 
 ## REGEX ##
 # vim ze je jich hodne, ale je to jedinej rozumnej a zaroven spolehlivej zpusob jak zjistit obsah toho http header
@@ -70,7 +70,7 @@ else:
         try:
             client,address = s.accept() # client = socket na druhe strane, address = tuple ve formatu addr + port druhe strany
             data = client.recv(1024) # buffer = 1024 default
-            if not data:
+            if not data: # neprisla zadna data
                 client.close()
                 break
             text = data.decode().split('\r\n') # obsah requestu v listu
@@ -85,6 +85,7 @@ else:
             SomeAccept = False # je tam nejaky jiny typ Accept nez vsechny validni typy. Defaultne predpokladejme ze tam zadny Accept typ neni
             FoundAccept = False # zatim nenalezl na zadnem radku Accept type
             CpuError = False # odeslat 500, vnitrni chyba serveru pri zpracovani cpuinfo
+            CpuNameError = False # odeslat 500, vnitrni chyba serveru pri zpracovani cpu name
             Browser = False # browser request: favicon etc.
 
             for line in text: #validace requestu
@@ -125,19 +126,24 @@ else:
                             model_name = re.compile("(?<=: ).*$")
                             for t in text:
                                 if re.match(model,t):
+                                    FoundCpuLine = True # naslo to radek s modelem
                                     data = re.findall(model_name,t)
-                                    data = data[0]
+                                    if data[0]:
+                                        data = data[0]
+                                    else:
+                                        CpuNameError = True # chybi nazev modelu
                                     break
+                            if not FoundCpuLine: # nebyl nalezen radek s modelem cpu
+                                CpuNameError = True
                         elif re.match(loadr,line): # vrat zatez a do Accept pridej refresh
                             FoundType = True
                             typ = "zatizeni"
                             data = getcpu()
                             if len(data) == 0: # budes vracet 500
-                                FoundType = False
                                 CpuError = True
                             else:
                                 refresh = re.findall(dec,line)
-                                if not refresh[0]: # request ma spatnou strukturu, 400
+                                if not refresh[0]: # request ma spatnou strukturu, 404
                                     FoundType = False
                                 else:
                                     refresh = refresh[0] # vyber refresh rate
@@ -147,7 +153,6 @@ else:
                             typ = "zatizeni"
                             data = getcpu()
                             if len(data) == 0: # budes vracet 500
-                                FoundType = False
                                 CpuError = True
 
             ##### processing vypisu: START #####
@@ -161,9 +166,9 @@ else:
                     elif SomeAccept: # spatny typ Accept, odesilas 406
                         typ = "Chyba"
                         data = "spatny Accept typ obsahu"
-                    elif CpuError: # Cpu error, nahrad typ chyby, odesilas 500
+                    elif CpuError or CpuNameError: # Cpu error || Cpu Name Error, nahrad typ chyby, odesilas 500
                         typ = "Chyba"
-                        data = "Vnitrni chyba serveru"
+                        data = "Vnitrni chyba serveru"                       
                 else: # je to request ale neni to GET, odesilas 405
                     typ = "Chyba"
                     data = "Nespravna metoda"
@@ -188,7 +193,7 @@ else:
                 if FoundType: # typ byl nalezen
                     if SomeAccept:  # odesilas 406, spatny typ Accept
                         outcoming = "HTTP/1.1 406 Not Acceptable\nContent-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
-                    elif CpuError:  # Cpu error, odesilas 500
+                    elif CpuError or CpuNameError:  # Cpu error load nebo name, odesilas 500
                         outcoming = "HTTP/1.1 500 Internal Server Error\nContent-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
                     else: # validni request, odesli 200
                         if RefreshRequest: # vytvor odpoved s refresh
