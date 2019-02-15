@@ -40,15 +40,15 @@ def getcpu(): # vraci % zatizeni cpu
 ## REGEX ##
 # vim ze je jich hodne, ale je to jedinej rozumnej a zaroven spolehlivej zpusob jak zjistit obsah toho http header
 # re typ pozadavku
-isrequest = re.compile("^(GET|POST|HEAD|PUT|DELETE|CONNECT|OPTION|TRACE) \/\S* HTTP\/[0-9]\.[0-9]\r\n$") # pokud nesedi sablone zadneho requestu, odeslat 400
-isgetrequest = re.compile("^GET \/\S* HTTP\/[0-9]\.[0-9]\r\n$") # musi sedet sablone get requestu, pokud ne odeslat 405
+isrequest = re.compile("^(GET|POST|HEAD|PUT|DELETE|CONNECT|OPTION|TRACE) \/\S* HTTP\/[0-9]\.[0-9]$") # pokud nesedi sablone zadneho requestu, odeslat 400
+isgetrequest = re.compile("^GET \/\S* HTTP\/[0-9]\.[0-9]$") # musi sedet sablone get requestu, pokud ne odeslat 405
 # jednotlive typy vyhovujici get requestu
-hostname = re.compile("^GET \/hostname HTTP\/[0-9]\.[0-9]\r\n$")
-cpuname = re.compile("^GET \/cpu-name HTTP\/[0-9]\.[0-9]\r\n$")
-load = re.compile("^GET \/load HTTP\/[0-9]\.[0-9]\r\n$")
-loadr = re.compile("^GET \/load\?refresh=[0-9]+ HTTP\/[0-9]\.[0-9]\r\n$")
+hostname = re.compile("^GET \/hostname HTTP\/[0-9]\.[0-9]$")
+cpuname = re.compile("^GET \/cpu-name HTTP\/[0-9]\.[0-9]$")
+load = re.compile("^GET \/load HTTP\/[0-9]\.[0-9]$")
+loadr = re.compile("^GET \/load\?refresh=[0-9]+ HTTP\/[0-9]\.[0-9]$")
 # re typ ignore (browser)
-icon = re.compile("^GET \/favicon.ico(\s+\w+.*)*")
+icon = re.compile("^GET \/favicon.ico HTTP\/[0-9]\.[0-9]$")
 # re typ accept
 all_accept = re.compile("^Accept:\s*\*\/\*\s*$") # */*
 tp_accept = re.compile("^Accept:\s*text\/(plain|\*)\s*$") # text/* || text/plain
@@ -104,9 +104,13 @@ else:
                         AllAccept = True
             if not FoundAccept: # pokus o nalezeni vubec nejakeho Accept typu
                 for line in text:
-                    if re.match(some_accept, line):
-                        SomeAccept = True
-                        break
+                    if "Accept:" in line: # naslo to radek ve kterem je "Accept"
+                        if re.match(some_accept, line): # ten radek odpovida obecnemu typu accept
+                            SomeAccept = True
+                            AcceptPresent = True
+                            break
+                        else: # accept ma nevalidni format, tzn spatny request. Odesli 400
+                            IsRequest = False
             if IsRequest and IsGetRequest: # jedna se o GET request. aby se netestovalo zbytecne na neco co neni request
                 for line in text:
                     if re.match(icon, line):
