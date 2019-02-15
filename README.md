@@ -29,8 +29,8 @@ ale je to spolehlivejsi zpusob kvuli slozitosti struktury requestu.
 ## Funkce pro ziskani cpu load
 Funkce spusti podproces s prikazem lscpu a zkouma jeho textovy vystup pomoci regexu. Zajimaji nas radky "max MHz" a "cpu MHz", hodnoty nasledujici za nimi prevede na float a podeli, vysledek prevede na int a posle zpet jako procentualni hodnotu. Pokud dojde k chybe (neco se pokazi na urovni ziskavani dat), server odesle response 500. Podobnym zpusobem probiha ziskavani nazvu cpu.
 
-## Refresh v prohlizeci
-Obnova probiha jednoduse pridanim Refresh:X;url=url_to_refresh do hlavicky repsonse.
+## Refresh v prohlizeci a favicon
+Obnova probiha jednoduse pridanim Refresh:X;url=url_to_refresh do hlavicky repsonse. Poznamka: prohlizec rovnez odesilal (Chrome) GET request na ziskani favicon. Tento request je ve skriptu odchycen a zamerne ignorovan, neni to mozna nejlepsi zpusob ale je nejjednodussi. Teoreticky by bylo spravnejsi odeslat prazdny soubor. 
 
 ## Odchytavani chyb a vyjimky
 Odesilane responses s chybami jsou serazeny podle priority,  nejprve se testuje zda se jedna o request, pote zda se jedna o GET request, pote jestli obsahuje spravnou URI, pote jestli se je pozadovany typ Accept v poradku a pote jestli nedoslo k vnitrni chybe serveru pri sberu informaci. Vice informaci viz. kod. Vyjimky jsou: neznamy hostitel, chyba adresy a timeout, osetrene na konci kodu.
