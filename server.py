@@ -50,10 +50,10 @@ loadr = re.compile("^GET \/load\?refresh=[0-9]+ HTTP\/[0-9]\.[0-9]$")
 # re typ ignore (browser)
 icon = re.compile("^GET \/favicon.ico HTTP\/[0-9]\.[0-9]$")
 # re typ accept
-all_accept = re.compile("^Accept:\s*\*\/\*\s*$") # */*
-tp_accept = re.compile("^Accept:\s*text\/(plain|\*)\s*$") # text/* || text/plain
-aj_accept = re.compile("^Accept:\s*application\/(json|\*)\s*$") # application/json || application/*
-some_accept = re.compile("^Accept:\s*\S+\/\S+\s*$") # jakykoliv dalsi Accept, pokud nebyly nalezeny ty predchozi
+all_accept = re.compile("^Accept:\s*\S*\*\/\*\S*$") # ..*/*..
+tp_accept = re.compile("^Accept:\s*\S*text\/(plain|\*)\S*$") # text/* || text/plain
+aj_accept = re.compile("^Accept:\s*\S*application\/(json|\*)\S*$") # ..application/json || application/*..
+some_accept = re.compile("^Accept:\s*\S+\/\S+$") # jakykoliv dalsi Accept, pokud nebyly nalezeny ty predchozi
 # dec cislo, vyhledani refresh rate v radku
 dec = re.compile("\d+")
 
@@ -74,6 +74,8 @@ else:
                 client.close()
                 break
             text = data.decode().split('\r\n') # obsah requestu v listu
+
+            print(text)
 
             # validacni promenne
             IsRequest = False # jestli je to vubec request, jestli ne odesli 400
