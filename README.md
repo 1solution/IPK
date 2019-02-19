@@ -26,6 +26,9 @@ if "string" is in "line":
 ```
 ale je to spolehlivejsi zpusob kvuli slozitosti struktury requestu.
 
+## prace s vlakny
+Pokud je spojeni s klientem validni, jeho zpracovani je umisteno do nove vytvoreneho vlakna, pomoci knihovny \_thread (pro nase ucely bohate staci). socket.listen() je nastaven na 25, tj pocet moznych klientu kteri mohou cekat ve fronte na spojeni se serverem.
+
 ## Funkce pro ziskani cpu load
 Funkce spusti podproces s prikazem lscpu a zkouma jeho textovy vystup pomoci regexu. Zajimaji nas radky "max MHz" a "cpu MHz", hodnoty nasledujici za nimi prevede na float a podeli, vysledek prevede na int a posle zpet jako procentualni hodnotu. Pokud dojde k chybe (neco se pokazi na urovni ziskavani dat), server odesle response 500. Podobnym zpusobem probiha ziskavani nazvu cpu.
 
