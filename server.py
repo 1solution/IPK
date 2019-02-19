@@ -6,6 +6,7 @@ import platform # je tu kvuli nazvu procesoru
 import subprocess # je tu kvuli spusteni lscpu
 import sys # je tu kvuli argv[1]
 import json # prevod data na json objekt
+import _thread # kvuli vlaknum
 
 if len(sys.argv) is not 2: # test na pocet argumentu
     print("Spatne argumenty.")
@@ -37,6 +38,161 @@ def getcpu(): # vraci % zatizeni cpu
     else:
         return '' # neco se rozbilo, 500
 
+
+# zpracovani klienta - START ##
+def processing(client,arg_port,arg_address): # vlakno s klientem
+
+    data = client.recv(1024)  # buffer = 1024 default
+    if not data:  # neprisla zadna data
+        client.close()
+    else:
+        text = data.decode().split('\r\n')  # obsah requestu v listu
+
+        # validacni promenne
+        IsRequest = False  # jestli je to vubec request, jestli ne odesli 400
+        IsGetRequest = False  # jedna se o GET request, otazka je s jakou adresou
+        RefreshRequest = False  # soucasti response bude refresh
+        ToJson = False  # budeme prevadet na JSON
+        FoundType = False  # zatim nenalezl na zadnem radku typ requestu
+        AllAccept = False  # request obsahuje Accept type */*
+        SomeAccept = False  # je tam nejaky jiny typ Accept nez vsechny validni typy. Defaultne predpokladejme ze tam zadny Accept typ neni
+        FoundAccept = False  # zatim nenalezl na zadnem radku Accept type
+        CpuError = False  # odeslat 500, vnitrni chyba serveru pri zpracovani cpuinfo
+        CpuNameError = False  # odeslat 500, vnitrni chyba serveru pri zpracovani cpu name
+        Browser = False  # browser request: favicon etc.
+
+        for line in text:  # validace requestu
+            if re.match(isrequest, line):  # validace jestli sae jedna o request
+                IsRequest = True  # jedna se o request
+                if re.match(isgetrequest, line):
+                    IsGetRequest = True  # jedna se o request GET
+            if not FoundAccept:  # validace header requestu, konkretne Accept: */*
+                if re.match(aj_accept, line):
+                    FoundAccept = True
+                    ToJson = True
+                elif re.match(tp_accept, line):
+                    FoundAccept = True
+                elif re.match(all_accept, line):
+                    FoundAccept = True
+                    AllAccept = True
+        if not FoundAccept:  # pokus o nalezeni vubec nejakeho Accept typu
+            for line in text:
+                if "Accept:" in line:  # naslo to radek ve kterem je "Accept"
+                    if re.match(some_accept, line):  # ten radek odpovida obecnemu typu accept
+                        SomeAccept = True
+                        AcceptPresent = True
+                        break
+                    else:  # accept ma nevalidni format, tzn spatny request. Odesli 400
+                        IsRequest = False
+        if IsRequest and IsGetRequest:  # jedna se o GET request. aby se netestovalo zbytecne na neco co neni request
+            for line in text:
+                if re.match(icon, line):
+                    Browser = True
+                if not FoundType:  # validace typu requestu GET /.....
+                    if re.match(hostname, line):  # vrat hostname (= hostname.domainname)
+                        FoundType = True
+                        typ = "hostname"
+                        data = socket.gethostname()
+                    elif re.match(cpuname, line):  # vrat nazev cpu
+                        FoundType = True
+                        typ = "cpu"
+                        cpuinfo = subprocess.Popen(["cat", "/proc/cpuinfo"], stdout=subprocess.PIPE, bufsize=1,
+                                                   universal_newlines=True)
+                        output = cpuinfo.communicate()[0]
+                        text = output.split('\n')
+                        model = re.compile("^model name.*$")
+                        model_name = re.compile("(?<=: ).*$")
+                        for t in text:
+                            if re.match(model, t):
+                                FoundCpuLine = True  # naslo to radek s modelem
+                                data = re.findall(model_name, t)
+                                if data[0]:
+                                    data = data[0]
+                                else:
+                                    CpuNameError = True  # chybi nazev modelu
+                                break
+                        if not FoundCpuLine:  # nebyl nalezen radek s modelem cpu
+                            CpuNameError = True
+                    elif re.match(loadr, line):  # vrat zatez a do Accept pridej refresh
+                        FoundType = True
+                        typ = "zatizeni"
+                        data = getcpu()
+                        if len(data) == 0:  # budes vracet 500
+                            CpuError = True
+                        else:
+                            refresh = re.findall(dec, line)
+                            if not refresh[0]:  # request ma spatnou strukturu, 404
+                                FoundType = False
+                            else:
+                                refresh = refresh[0]  # vyber refresh rate
+                                RefreshRequest = True  # budes vytvaret vlastni textovy request k odeslani
+                    elif re.match(load, line):  # vrat zatez
+                        FoundType = True
+                        typ = "zatizeni"
+                        data = getcpu()
+                        if len(data) == 0:  # budes vracet 500
+                            CpuError = True
+
+        ##### processing vypisu: START #####
+
+        # odchyceni chyb
+        if IsRequest:
+            if IsGetRequest:
+                if not FoundType:  # nebyl nalezen typ, ale budes posilat 404 (text nebo JSON)
+                    data = "Obsah nenalezen"
+                    typ = "Chyba"
+                elif SomeAccept:  # spatny typ Accept, odesilas 406
+                    typ = "Chyba"
+                    data = "spatny Accept typ obsahu"
+                elif CpuError or CpuNameError:  # Cpu error || Cpu Name Error, nahrad typ chyby, odesilas 500
+                    typ = "Chyba"
+                    data = "Vnitrni chyba serveru"
+            else:  # je to request ale neni to GET, odesilas 405
+                typ = "Chyba"
+                data = "Nespravna metoda"
+        else:  # neni to request, posli 400
+            typ = "Chyba"
+            data = "Spatna syntaxe requestu"
+
+        # prevod dat na json tam, kde ma byt json
+        if ToJson:  # nalezen typ json
+            data = "{ \"typ : " + typ + "\" , \"hodnota : " + data + "\" }"
+            data = json.dumps(data)
+            content_type = "application/json"
+            str_length = ''  # delku u JSONu neudavat
+        else:  # nalezen typ text nebo nebyl nalezen, takze posilam text. Nebo pripad kdy byl nalezen jiny typ nez Json
+            content_type = "text/plain"
+            data = data + '\n'  # pridej novy radek kvuli terminalu
+            str_length = "\nContent-Length: " + str(len(data))  # delka dat u text/plain
+
+        ##### processing vypisu: FAKTICKE ODESLANI DAT #####
+
+        if not Browser:  # nebylo to browserem (favicon..)
+            if FoundType:  # typ byl nalezen
+                if SomeAccept:  # odesilas 406, spatny typ Accept
+                    outcoming = "HTTP/1.1 406 Not Acceptable\nContent-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
+                elif CpuError or CpuNameError:  # Cpu error load nebo name, odesilas 500
+                    outcoming = "HTTP/1.1 500 Internal Server Error\nContent-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
+                else:  # validni request, odesli 200
+                    if RefreshRequest:  # vytvor odpoved s refresh
+                        refr_string = "Refresh: " + refresh + ";url=http://" + arg_address + ":" + str(
+                            arg_port) + "/load?refresh=" + refresh + "\n"
+                    else:  # vytvor obyc-ejnou odpoved
+                        refr_string = ''
+                    outcoming = "HTTP/1.1 200 OK\n" + refr_string + "Content-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
+            else:  # typ nenalezen, jedna se o nevalidni request a resi se chyby
+                if IsRequest:
+                    if IsGetRequest:
+                        if not FoundType:  # nebyl nalezen typ, ale budes posilat 404 (text nebo JSON)
+                            outcoming = "HTTP/1.1 404 Not Found\nContent-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
+                    else:  # je to request ale neni to GET, odesilas 405
+                        outcoming = "HTTP/1.1 405 Method Not Allowed\nContent-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
+                else:  # neni to request, posli 400
+                    outcoming = "HTTP/1.1 400 Bad Request\nContent-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
+            client.sendall(outcoming.encode())  # odeslani requestu
+        client.close() # uzavreni socketu na strane klienta
+## zpracovani klienta - END ##
+
 ## REGEX ##
 # vim ze je jich hodne, ale je to jedinej rozumnej a zaroven spolehlivej zpusob jak zjistit obsah toho http header
 # re typ pozadavku
@@ -65,161 +221,14 @@ try:
 except socket.error:
     print("Chyba pri vytvareni socketu.")
 else:
-    s.listen(0)
+    s.listen(25) # kolik klientu muze maximalne cekat ve fronte na pripojeni
     while True:
         try:
             client,address = s.accept() # client = socket na druhe strane, address = tuple ve formatu addr + port druhe strany
-            data = client.recv(1024) # buffer = 1024 default
-            if not data: # neprisla zadna data
-                client.close()
-                break
-            text = data.decode().split('\r\n') # obsah requestu v listu
-
-            print(text)
-
-            # validacni promenne
-            IsRequest = False # jestli je to vubec request, jestli ne odesli 400
-            IsGetRequest = False # jedna se o GET request, otazka je s jakou adresou
-            RefreshRequest = False # soucasti response bude refresh
-            ToJson = False # budeme prevadet na JSON
-            FoundType = False # zatim nenalezl na zadnem radku typ requestu
-            AllAccept = False # request obsahuje Accept type */*
-            SomeAccept = False # je tam nejaky jiny typ Accept nez vsechny validni typy. Defaultne predpokladejme ze tam zadny Accept typ neni
-            FoundAccept = False # zatim nenalezl na zadnem radku Accept type
-            CpuError = False # odeslat 500, vnitrni chyba serveru pri zpracovani cpuinfo
-            CpuNameError = False # odeslat 500, vnitrni chyba serveru pri zpracovani cpu name
-            Browser = False # browser request: favicon etc.
-
-            for line in text: #validace requestu
-                if re.match(isrequest,line): # validace jestli sae jedna o request
-                    IsRequest = True # jedna se o request
-                    if re.match(isgetrequest,line):
-                        IsGetRequest = True # jedna se o request GET
-                if not FoundAccept:  # validace header requestu, konkretne Accept: */*
-                    if re.match(aj_accept, line):
-                        FoundAccept = True
-                        ToJson = True
-                    elif re.match(tp_accept, line):
-                        FoundAccept = True
-                    elif re.match(all_accept, line):
-                        FoundAccept = True
-                        AllAccept = True
-            if not FoundAccept: # pokus o nalezeni vubec nejakeho Accept typu
-                for line in text:
-                    if "Accept:" in line: # naslo to radek ve kterem je "Accept"
-                        if re.match(some_accept, line): # ten radek odpovida obecnemu typu accept
-                            SomeAccept = True
-                            AcceptPresent = True
-                            break
-                        else: # accept ma nevalidni format, tzn spatny request. Odesli 400
-                            IsRequest = False
-            if IsRequest and IsGetRequest: # jedna se o GET request. aby se netestovalo zbytecne na neco co neni request
-                for line in text:
-                    if re.match(icon, line):
-                        Browser = True
-                    if not FoundType: # validace typu requestu GET /.....
-                        if re.match(hostname,line): # vrat hostname (= hostname.domainname)
-                            FoundType = True
-                            typ = "hostname"
-                            data = socket.gethostname()
-                        elif re.match(cpuname,line): # vrat nazev cpu
-                            FoundType = True
-                            typ = "cpu"
-                            cpuinfo = subprocess.Popen(["cat","/proc/cpuinfo"], stdout=subprocess.PIPE, bufsize=1, universal_newlines=True)
-                            output = cpuinfo.communicate()[0]
-                            text = output.split('\n')
-                            model = re.compile("^model name.*$")
-                            model_name = re.compile("(?<=: ).*$")
-                            for t in text:
-                                if re.match(model,t):
-                                    FoundCpuLine = True # naslo to radek s modelem
-                                    data = re.findall(model_name,t)
-                                    if data[0]:
-                                        data = data[0]
-                                    else:
-                                        CpuNameError = True # chybi nazev modelu
-                                    break
-                            if not FoundCpuLine: # nebyl nalezen radek s modelem cpu
-                                CpuNameError = True
-                        elif re.match(loadr,line): # vrat zatez a do Accept pridej refresh
-                            FoundType = True
-                            typ = "zatizeni"
-                            data = getcpu()
-                            if len(data) == 0: # budes vracet 500
-                                CpuError = True
-                            else:
-                                refresh = re.findall(dec,line)
-                                if not refresh[0]: # request ma spatnou strukturu, 404
-                                    FoundType = False
-                                else:
-                                    refresh = refresh[0] # vyber refresh rate
-                                    RefreshRequest = True # budes vytvaret vlastni textovy request k odeslani
-                        elif re.match(load,line): # vrat zatez
-                            FoundType = True
-                            typ = "zatizeni"
-                            data = getcpu()
-                            if len(data) == 0: # budes vracet 500
-                                CpuError = True
-
-            ##### processing vypisu: START #####
-
-            # odchyceni chyb
-            if IsRequest:
-                if IsGetRequest:
-                    if not FoundType: # nebyl nalezen typ, ale budes posilat 404 (text nebo JSON)
-                        data = "Obsah nenalezen"
-                        typ = "Chyba"
-                    elif SomeAccept: # spatny typ Accept, odesilas 406
-                        typ = "Chyba"
-                        data = "spatny Accept typ obsahu"
-                    elif CpuError or CpuNameError: # Cpu error || Cpu Name Error, nahrad typ chyby, odesilas 500
-                        typ = "Chyba"
-                        data = "Vnitrni chyba serveru"                       
-                else: # je to request ale neni to GET, odesilas 405
-                    typ = "Chyba"
-                    data = "Nespravna metoda"
-            else: # neni to request, posli 400
-                typ = "Chyba"
-                data = "Spatna syntaxe requestu"
-
-            # prevod dat na json tam, kde ma byt json
-            if ToJson: # nalezen typ json
-                data = "{ \"typ : " + typ + "\" , \"hodnota : " + data + "\" }"
-                data = json.dumps(data)
-                content_type = "application/json"
-                str_length = '' # delku u JSONu neudavat
-            else: # nalezen typ text nebo nebyl nalezen, takze posilam text. Nebo pripad kdy byl nalezen jiny typ nez Json
-                content_type = "text/plain"
-                data = data + '\n' # pridej novy radek kvuli terminalu
-                str_length = "\nContent-Length: " + str(len(data)) # delka dat u text/plain
-
-            ##### processing vypisu: FAKTICKE ODESLANI DAT #####
-
-            if not Browser: # nebylo to browserem (favicon..)
-                if FoundType: # typ byl nalezen
-                    if SomeAccept:  # odesilas 406, spatny typ Accept
-                        outcoming = "HTTP/1.1 406 Not Acceptable\nContent-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
-                    elif CpuError or CpuNameError:  # Cpu error load nebo name, odesilas 500
-                        outcoming = "HTTP/1.1 500 Internal Server Error\nContent-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
-                    else: # validni request, odesli 200
-                        if RefreshRequest: # vytvor odpoved s refresh
-                            refr_string = "Refresh: " + refresh + ";url=http://" + arg_address + ":" + str(arg_port) + "/load?refresh=" + refresh + "\n"
-                        else: # vytvor obyc-ejnou odpoved
-                            refr_string = ''
-                        outcoming = "HTTP/1.1 200 OK\n" + refr_string + "Content-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
-                else: # typ nenalezen, jedna se o nevalidni request a resi se chyby
-                    if IsRequest:
-                        if IsGetRequest:
-                            if not FoundType:  # nebyl nalezen typ, ale budes posilat 404 (text nebo JSON)
-                                outcoming = "HTTP/1.1 404 Not Found\nContent-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
-                        else:  # je to request ale neni to GET, odesilas 405
-                            outcoming = "HTTP/1.1 405 Method Not Allowed\nContent-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
-                    else:  # neni to request, posli 400
-                        outcoming = "HTTP/1.1 400 Bad Request\nContent-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
-
-                client.sendall(outcoming.encode()) # odeslani requestu
-            client.close()
-
+            try:
+                _thread.start_new_thread(processing,(client,arg_port,arg_address,)) # zaloz nove vlakno s aktualnim klientem
+            except:
+                print("Nelze vytvorit vlakno.")
         # osetri vyjimky, chyba host, chyba adresy a timeout pri vytvareni
         except socket.herror as e:
             print(e)
@@ -227,4 +236,4 @@ else:
             print(e)
         except socket.timeout as e:
             print(e)
-    s.close() # uzavri spojeni, porad jsme ale ve smycce
+    s.close() # uzavri socket na strane serveru
