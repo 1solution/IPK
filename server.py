@@ -60,8 +60,11 @@ def processing(client,arg_port,arg_address): # vlakno s klientem
         CpuError = False  # odeslat 500, vnitrni chyba serveru pri zpracovani cpuinfo
         CpuNameError = False  # odeslat 500, vnitrni chyba serveru pri zpracovani cpu name
         Browser = False  # browser request: favicon etc.
-
+        Keepalive = False # defaultne je Connection: closed
+        
         for line in text:  # validace requestu
+            if re.match(keepalive, line): # Keep alive connection, jinak je closed
+                Keepalive = True
             if re.match(isrequest, line):  # validace jestli sae jedna o request
                 IsRequest = True  # jedna se o request
                 if re.match(isgetrequest, line):
@@ -195,6 +198,9 @@ def processing(client,arg_port,arg_address): # vlakno s klientem
 
 ## REGEX ##
 # vim ze je jich hodne, ale je to jedinej rozumnej a zaroven spolehlivej zpusob jak zjistit obsah toho http header
+# keep alive connection
+connection = re.compile("^Connection: (keep-alive|close)$") # jestli se jedna o validni radek s conenction
+keepalive = re.compile("^Connection: keep-alive$")
 # re typ pozadavku
 isrequest = re.compile("^(GET|POST|HEAD|PUT|DELETE|CONNECT|OPTION|TRACE) \/\S* HTTP\/[0-9]\.[0-9]$") # pokud nesedi sablone zadneho requestu, odeslat 400
 isgetrequest = re.compile("^GET \/\S* HTTP\/[0-9]\.[0-9]$") # musi sedet sablone get requestu, pokud ne odeslat 405
@@ -215,6 +221,7 @@ dec = re.compile("\d+")
 
 try:
     s = socket.socket(socket.AF_INET,socket.SOCK_STREAM) # vytvor socket
+    s.settimoeout(5.0) # nastav timeout socketu na 5 sekund
     arg_address = ''.join(socket.gethostbyname_ex(socket.gethostname())[2]) # host
     arg_port = sys.argv[1] # port
     s.bind((arg_address, int(arg_port)))
