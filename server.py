@@ -40,7 +40,7 @@ def getcpu(): # vraci % zatizeni cpu
 
 
 # zpracovani klienta - START ##
-def processing(client,arg_port,arg_address): # vlakno s klientem
+def processing(client,s,arg_port,arg_address): # vlakno s klientem
 
     data = client.recv(1024)  # buffer = 1024 default
     if not data:  # neprisla zadna data
@@ -96,7 +96,7 @@ def processing(client,arg_port,arg_address): # vlakno s klientem
             for line in text:
                 if "Connection:" in line or "connection:" in line: # Pokud se vyskytuje radek s connection
                     if re.match(connection, line): # naslo to radek s connection
-                        if re.match(keepalive, line): # Keep alive connection, jinak je closed
+                        if re.match(keepalive, line): # Keep alive connection, pokud je explicitne napsano ze ma byt keep-alive
                             Keepalive = True
                     else: # nevalidni radek s connection
                         Connection = False
@@ -148,6 +148,13 @@ def processing(client,arg_port,arg_address): # vlakno s klientem
                         if len(data) == 0:  # budes vracet 500
                             CpuError = True
 
+        ## zpracovani keep-alive na strane serveru. Funguje pouze pro linux, pro W a osx ne
+        if Keepalive: # pokud je pozadavek na keep-alive
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1) # nastav keepalive flag
+            s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 1) # aktivuj po 1s neaktivity
+            s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 2) # odesli keep-alive ping kazde 2s
+            s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 5) # po 5ti neuspesnych ping uzavri spojeni (10s)
+                            
         ##### processing vypisu: START #####
 
         # odchyceni chyb
@@ -155,6 +162,9 @@ def processing(client,arg_port,arg_address): # vlakno s klientem
             if IsGetRequest:
                 if not FoundType:  # nebyl nalezen typ, ale budes posilat 404 (text nebo JSON)
                     data = "Obsah nenalezen"
+                    typ = "Chyba"
+                elif not Connection: # spatny typ connection, odesilas 400
+                    data = "Spatny typ Connection"
                     typ = "Chyba"
                 elif SomeAccept:  # spatny typ Accept, odesilas 406
                     typ = "Chyba"
@@ -200,6 +210,8 @@ def processing(client,arg_port,arg_address): # vlakno s klientem
                     if IsGetRequest:
                         if not FoundType:  # nebyl nalezen typ, ale budes posilat 404 (text nebo JSON)
                             outcoming = "HTTP/1.1 404 Not Found\nContent-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
+                        if not Connection: # spatny radek s Connection, budes posilat 400
+                            outcoming = "HTTP/1.1 400 Bad Request\nContent-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
                     else:  # je to request ale neni to GET, odesilas 405
                         outcoming = "HTTP/1.1 405 Method Not Allowed\nContent-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
                 else:  # neni to request, posli 400
@@ -249,7 +261,7 @@ else:
         try:
             client,address = s.accept() # client = socket na druhe strane, address = tuple ve formatu addr + port druhe strany
             try:
-                _thread.start_new_thread(processing,(client,arg_port,arg_address,)) # zaloz nove vlakno s aktualnim klientem
+                _thread.start_new_thread(processing,(client,s,arg_port,arg_address,)) # zaloz nove vlakno s aktualnim klientem
             except:
                 print("Nelze vytvorit vlakno.")
         # osetri vyjimky, chyba host, chyba adresy a timeout pri vytvareni
