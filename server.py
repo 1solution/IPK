@@ -252,7 +252,7 @@ ver_11 = re.compile("1\.1")
 
 try:
     s = socket.socket(socket.AF_INET,socket.SOCK_STREAM) # vytvor socket
-    s.settimoeout(5.0) # nastav timeout socketu na 5 sekund
+    s.settimoeout(15.0) # nastav timeout socketu
     arg_address = ''.join(socket.gethostbyname_ex(socket.gethostname())[2]) # host
     arg_port = sys.argv[1] # port
     s.bind((arg_address, int(arg_port)))
