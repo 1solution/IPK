@@ -7,7 +7,7 @@ import subprocess # je tu kvuli spusteni lscpu
 import sys # je tu kvuli argv[1]
 import json # prevod data na json objekt
 import _thread # kvuli vlaknum
-from email.utils import formatdate # kvuli date v http response
+from email.utils import formatdate # kvuli casu a datu v http response
 
 if len(sys.argv) is not 2: # test na pocet argumentu
     print("Spatne argumenty.")
@@ -265,13 +265,15 @@ else:
             client,address = s.accept() # client = socket na druhe strane, address = tuple ve formatu addr + port druhe strany
             try:
                 _thread.start_new_thread(processing,(client,s,arg_port,arg_address,)) # zaloz nove vlakno s aktualnim klientem
+            except socket.timeout as e: # timeout error
+                print(e)
+            except socket.herror as e: # chyba host
+                print(e)
+            except socket.gaierror as e: # jina chyba
+                print(e)
             except:
                 print("Nelze vytvorit vlakno.")
-        # osetri vyjimky, chyba host, chyba adresy a timeout pri vytvareni
-        except socket.herror as e:
-            print(e)
-        except socket.gaierror as e:
-            print(e)
-        except socket.timeout as e:
-            print(e)
+        # osetri vyjimky
+        except:
+            print("Chyba socketu.")
     s.close() # uzavri socket na strane serveru
