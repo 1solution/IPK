@@ -259,7 +259,7 @@ try:
 except socket.error:
     print("Chyba pri vytvareni socketu.")
 else:
-    s.listen(25) # kolik klientu muze maximalne cekat ve fronte na pripojeni
+    s.listen(25) # kolik klientu muze maximalne cekat ve fronte na pripojeni, nez je zacne server odmitat
     while True:
         try:
             client,address = s.accept() # client = socket na druhe strane, address = tuple ve formatu addr + port druhe strany
@@ -276,4 +276,7 @@ else:
         # osetri vyjimky
         except:
             print("Chyba socketu.")
-    s.close() # uzavri socket na strane serveru
+    try:
+        s.close() # uzavri socket na strane serveru
+    except:
+        pass
