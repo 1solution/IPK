@@ -155,7 +155,8 @@ def processing(client,s,arg_port,arg_address): # vlakno s klientem
             s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 5) # aktivuj po 5s neaktivity
             s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 2) # odesli keep-alive ping kazde 2s
             s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 5) # po 5ti neuspesnych ping uzavri spojeni (10s)
-            conn = "Connection: Keep-Alive; \nKeep-Alive: timeout=15, max=50\nDate: "  + formatdate(timeval=None, localtime=False, usegmt=True) + "\n" # timeout = 5s + 10s max = max pocet spojeni pres socket
+            conn = "Keep-Alive: timeout=15, max=50\nDate: "  + formatdate(timeval=None, localtime=False, usegmt=True) + "\n" # timeout = 5s + 10s max = max pocet spojeni pres socket
+            # Connection keep alive je pro http 1.1 defaultni, nemusi tu tedy byt
         else:
             conn = "Connection: close\n Date: " + formatdate(timeval=None, localtime=False, usegmt=True) + "\n"
         ##### processing vypisu: START #####
