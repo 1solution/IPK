@@ -60,13 +60,18 @@ def processing(client,arg_port,arg_address): # vlakno s klientem
         CpuError = False  # odeslat 500, vnitrni chyba serveru pri zpracovani cpuinfo
         CpuNameError = False  # odeslat 500, vnitrni chyba serveru pri zpracovani cpu name
         Browser = False  # browser request: favicon etc.
+        Connection = True # jedna se o validni radek s connection
         Keepalive = False # defaultne je Connection: closed
         
         for line in text:  # validace requestu
-            if re.match(keepalive, line): # Keep alive connection, jinak je closed
-                Keepalive = True
-            if re.match(isrequest, line):  # validace jestli sae jedna o request
+            if re.match(isrequest, line):  # validace jestli se jedna o request
                 IsRequest = True  # jedna se o request
+                if re.match(ver_09, line) or re.match(ver_10, line):
+                    Keepalive = False # defaultni connection: close u verze http 0.9 a 1.0
+                elif re.match(ver_11, line):
+                    Keepalive = True # defualtni conenction: keep alive u verze http 1.1
+                elif re.match(ver_20, line): # nalezena verze http 2.0
+                    Version2 = True
                 if re.match(isgetrequest, line):
                     IsGetRequest = True  # jedna se o request GET
             if not FoundAccept:  # validace header requestu, konkretne Accept: */*
@@ -80,7 +85,7 @@ def processing(client,arg_port,arg_address): # vlakno s klientem
                     AllAccept = True
         if not FoundAccept:  # pokus o nalezeni vubec nejakeho Accept typu
             for line in text:
-                if "Accept:" in line:  # naslo to radek ve kterem je "Accept"
+                if "Accept:" in line or "accept:" in line:  # naslo to radek ve kterem je "Accept"
                     if re.match(some_accept, line):  # ten radek odpovida obecnemu typu accept
                         SomeAccept = True
                         AcceptPresent = True
@@ -89,6 +94,13 @@ def processing(client,arg_port,arg_address): # vlakno s klientem
                         IsRequest = False
         if IsRequest and IsGetRequest:  # jedna se o GET request. aby se netestovalo zbytecne na neco co neni request
             for line in text:
+                if "Connection:" in line or "connection:" in line: # Pokud se vyskytuje radek s connection
+                    if re.match(connection, line): # naslo to radek s connection
+                        if re.match(keepalive, line): # Keep alive connection, jinak je closed
+                            Keepalive = True
+                    else: # nevalidni radek s connection
+                        Connection = False
+                
                 if re.match(icon, line):
                     Browser = True
                 if not FoundType:  # validace typu requestu GET /.....
@@ -199,25 +211,29 @@ def processing(client,arg_port,arg_address): # vlakno s klientem
 ## REGEX ##
 # vim ze je jich hodne, ale je to jedinej rozumnej a zaroven spolehlivej zpusob jak zjistit obsah toho http header
 # keep alive connection
-connection = re.compile("^Connection: (keep-alive|close)$") # jestli se jedna o validni radek s conenction
-keepalive = re.compile("^Connection: keep-alive$")
+connection = re.compile("^[Cc]onnection:\s*(keep-alive|close)$") # jestli se jedna o validni radek s conenction
+keepalive = re.compile("^[Cc]onnection:\s*keep-alive$")
 # re typ pozadavku
-isrequest = re.compile("^(GET|POST|HEAD|PUT|DELETE|CONNECT|OPTION|TRACE) \/\S* HTTP\/[0-9]\.[0-9]$") # pokud nesedi sablone zadneho requestu, odeslat 400
-isgetrequest = re.compile("^GET \/\S* HTTP\/[0-9]\.[0-9]$") # musi sedet sablone get requestu, pokud ne odeslat 405
+isrequest = re.compile("^(GET|POST|HEAD|PUT|DELETE|CONNECT|OPTION|TRACE) \/\S* HTTP\/(0\.9|1\.0|1\.1)$") # pokud nesedi sablone zadneho requestu, odeslat 400
+isgetrequest = re.compile("^GET \/\S* HTTP\/(0\.9|1\.0|1\.1)$") # musi sedet sablone get requestu, pokud ne odeslat 405
 # jednotlive typy vyhovujici get requestu
-hostname = re.compile("^GET \/hostname HTTP\/[0-9]\.[0-9]$")
-cpuname = re.compile("^GET \/cpu-name HTTP\/[0-9]\.[0-9]$")
-load = re.compile("^GET \/load HTTP\/[0-9]\.[0-9]$")
-loadr = re.compile("^GET \/load\?refresh=[0-9]+ HTTP\/[0-9]\.[0-9]$")
+hostname = re.compile("^GET \/hostname HTTP\/(0\.9|1\.0|1\.1)$")
+cpuname = re.compile("^GET \/cpu-name HTTP\/(0\.9|1\.0|1\.1)$")
+load = re.compile("^GET \/load HTTP\/(0\.9|1\.0|1\.1)$")
+loadr = re.compile("^GET \/load\?refresh=[0-9]+ HTTP\/(0\.9|1\.0|1\.1)$")
 # re typ ignore (browser)
-icon = re.compile("^GET \/favicon.ico HTTP\/[0-9]\.[0-9]$")
+icon = re.compile("^GET \/favicon.ico HTTP\/(0\.9|1\.0|1\.1)$")
 # re typ accept
-all_accept = re.compile("^Accept:\s*\S*\*\/\*\S*$") # ..*/*..
-tp_accept = re.compile("^Accept:\s*\S*text\/(plain|\*)\S*$") # text/* || text/plain
-aj_accept = re.compile("^Accept:\s*\S*application\/(json|\*)\S*$") # ..application/json || application/*..
-some_accept = re.compile("^Accept:\s*\S+\/\S+$") # jakykoliv dalsi Accept, pokud nebyly nalezeny ty predchozi
+all_accept = re.compile("^[Aa]ccept:\s*\S*\*\/\*\S*$") # ..*/*..
+tp_accept = re.compile("^[Aa]ccept:\s*\S*text\/(plain|\*)\S*$") # text/* || text/plain
+aj_accept = re.compile("^[Aa]ccept:\s*\S*application\/(json|\*)\S*$") # ..application/json || application/*..
+some_accept = re.compile("^[Aa]ccept:\s*\S+\/\S+$") # jakykoliv dalsi Accept, pokud nebyly nalezeny ty predchozi
 # dec cislo, vyhledani refresh rate v radku
 dec = re.compile("\d+")
+# ruzne verze HTTP
+ver_09 = re.compile("0\.9")
+ver_10 = re.compile("1\.0")
+ver_11 = re.compile("1\.1")
 
 try:
     s = socket.socket(socket.AF_INET,socket.SOCK_STREAM) # vytvor socket
