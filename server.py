@@ -9,6 +9,8 @@ import json # prevod data na json objekt
 import _thread # kvuli vlaknum
 from email.utils import formatdate # kvuli casu a datu v http response
 
+max_requests = 3 # maximalni pocet requestu pres jeden socket
+
 if len(sys.argv) is not 2: # test na pocet argumentu
     print("Spatne argumenty.")
     sys.exit(1)
@@ -16,6 +18,12 @@ port = int(sys.argv[1])
 if not isinstance(port,int) or port < 1024 or port > 65535: # test na port
     print("Spatne cislo portu nebo spatny format cisla portu")
     sys.exit(1)
+
+def keep(s, after_idle_sec=5, interval_sec=2, max_fails=5):
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, after_idle_sec)
+    s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, interval_sec)
+    s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, max_fails)
 
 def getcpu(): # vraci % zatizeni cpu
     curr = re.compile("^CPU MHz:\s*[0-9]+[\,,\.][0-9]+$") # dostan maximum
@@ -41,16 +49,16 @@ def getcpu(): # vraci % zatizeni cpu
 
 
 # zpracovani klienta - START ##
-def processing(client,s,arg_port,arg_address): # vlakno s klientem
+def processing(client,s,arg_port,arg_address, max_requests): # vlakno s klientem
 
-    useSameSocket = True # pouzivej stejny socket, connect: keep alive
-    conn_count = 0 # pocet requestu v ramci jednoho TCP spojeni (keep alive->max)
-                    
-    while(useSameSocket):
-        data = client.recv(1024)  # buffer = 1024 default
-        if not data:  # neprisla zadna data
-            client.close()
-        else:
+    print("oteviram nove vlakno..")
+            
+    for i in range(3):
+        data = client.recv(1024) # buffer = 1024 default
+        if not data:  # neprisla zadna data, socket je zavreny
+            break    
+           
+        if data:
             text = data.decode().split('\r\n')  # obsah requestu v listu
 
             # validacni promenne
@@ -59,7 +67,6 @@ def processing(client,s,arg_port,arg_address): # vlakno s klientem
             RefreshRequest = False  # soucasti response bude refresh
             ToJson = False  # budeme prevadet na JSON
             FoundType = False  # zatim nenalezl na zadnem radku typ requestu
-            AllAccept = False  # request obsahuje Accept type */*
             SomeAccept = False  # je tam nejaky jiny typ Accept nez vsechny validni typy. Defaultne predpokladejme ze tam zadny Accept typ neni
             FoundAccept = False  # zatim nenalezl na zadnem radku Accept type
             CpuError = False  # odeslat 500, vnitrni chyba serveru pri zpracovani cpuinfo
@@ -75,8 +82,6 @@ def processing(client,s,arg_port,arg_address): # vlakno s klientem
                         Keepalive = False # defaultni connection: close u verze http 0.9 a 1.0
                     elif re.match(ver_11, line):
                         Keepalive = True # defualtni conenction: keep alive u verze http 1.1
-                    elif re.match(ver_20, line): # nalezena verze http 2.0
-                        Version2 = True
                     if re.match(isgetrequest, line):
                         IsGetRequest = True  # jedna se o request GET
                 if not FoundAccept:  # validace header requestu, konkretne Accept: */*
@@ -87,13 +92,11 @@ def processing(client,s,arg_port,arg_address): # vlakno s klientem
                         FoundAccept = True
                     elif re.match(all_accept, line):
                         FoundAccept = True
-                        AllAccept = True
             if not FoundAccept:  # pokus o nalezeni vubec nejakeho Accept typu
                 for line in text:
                     if "Accept:" in line or "accept:" in line:  # naslo to radek ve kterem je "Accept"
                         if re.match(some_accept, line):  # ten radek odpovida obecnemu typu accept
                             SomeAccept = True
-                            AcceptPresent = True
                             break
                         else:  # accept ma nevalidni format, tzn spatny request. Odesli 400
                             IsRequest = False
@@ -103,6 +106,8 @@ def processing(client,s,arg_port,arg_address): # vlakno s klientem
                         if re.match(connection, line): # naslo to radek s connection
                             if re.match(keepalive, line): # Keep alive connection, pokud je explicitne napsano ze ma byt keep-alive
                                 Keepalive = True
+                            elif re.match(keepclose, line):
+                                Keepalive = False
                         else: # nevalidni radek s connection
                             Connection = False
 
@@ -155,19 +160,16 @@ def processing(client,s,arg_port,arg_address): # vlakno s klientem
 
             ## zpracovani keep-alive na strane serveru. Funguje pouze pro linux, pro W a osx ne
             if Keepalive: # pokud je pozadavek na keep-alive nebo HTTP 1.1 automaticky
-                conn_count = conn_count + 1 # useSocket = True zustava, dojde ke zvyseni citace
-                if conn_count == 49: # posledni mozny zpracovavany request pres tento port, max = 50
+                if i == max_requests-1: # posledni mozny zpracovavany request pres tento port, max = 50
+                    print("Posledni mozny request, pak uzavri socket.")
                     conn = "Connection: close\n Date: " + formatdate(timeval=None, localtime=False, usegmt=True) + "\n"
-                    useSameSocket = False # nepouzivej dal stejny socket, dojde k jeho uzavreni. conn_count se na zacatku pak vynuluje
                 else:
-                    s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1) # nastav keepalive flag
-                    s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 5) # aktivuj po 5s neaktivity
-                    s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 2) # odesli keep-alive ping kazde 2s
-                    s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 5) # po 5ti neuspesnych ping uzavri spojeni (10s)
+                    print("Keep-alive, pokracuj v tomto socketu.")
+                    keep(s) # nastav parametry keep alive v linuxu
                     conn = "Keep-Alive: timeout=15, max=50\nDate: "  + formatdate(timeval=None, localtime=False, usegmt=True) + "\n" # timeout = 5s + 10s max = max pocet spojeni pres socket
                     # Connection keep alive je pro http 1.1 defaultni, nemusi tu tedy byt
             else:
-                useSameSocket = False # nepouzivej dal stejny socket, dojde k jeho uzavreni
+                print("Pozadano o connection close, zavri socket.")
                 conn = "Connection: close\n Date: " + formatdate(timeval=None, localtime=False, usegmt=True) + "\n"
                 
             ##### processing vypisu: START #####
@@ -231,8 +233,8 @@ def processing(client,s,arg_port,arg_address): # vlakno s klientem
                     else:  # neni to request, posli 400
                         outcoming = "HTTP/1.1 400 Bad Request\n" + conn + "Content-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
                 client.sendall(outcoming.encode())  # odeslani requestu
-                        
-        client.close() # uzavreni socketu na strane klienta
+    print("Zaviram klientsky socket.")
+    client.close() # uzavreni socketu na strane klienta
 ## zpracovani klienta - END ##
 
 ## REGEX ##
@@ -240,6 +242,7 @@ def processing(client,s,arg_port,arg_address): # vlakno s klientem
 # keep alive connection
 connection = re.compile("^[Cc]onnection:\s*([Kk]eep-alive|[Cc]lose)$") # jestli se jedna o validni radek s conenction
 keepalive = re.compile("^[Cc]onnection:\s*[Kk]eep-[Aa]live$")
+keepclose = re.compile("^[Cc]onnection:\s*[Cc]lose$")
 # re typ pozadavku
 isrequest = re.compile("^(GET|POST|HEAD|PUT|DELETE|CONNECT|OPTION|TRACE) \/\S* HTTP\/(0\.9|1\.0|1\.1)$") # pokud nesedi sablone zadneho requestu, odeslat 400
 isgetrequest = re.compile("^GET \/\S* HTTP\/(0\.9|1\.0|1\.1)$") # musi sedet sablone get requestu, pokud ne odeslat 405
@@ -258,16 +261,17 @@ some_accept = re.compile("^[Aa]ccept:\s*\S+\/\S+$") # jakykoliv dalsi Accept, po
 # dec cislo, vyhledani refresh rate v radku
 dec = re.compile("\d+")
 # ruzne verze HTTP
-ver_09 = re.compile("0\.9")
-ver_10 = re.compile("1\.0")
-ver_11 = re.compile("1\.1")
+ver_09 = re.compile("^GET \/\S* HTTP\/0\.9$")
+ver_10 = re.compile("^GET \/\S* HTTP\/1\.0$")
+ver_11 = re.compile("^GET \/\S* HTTP\/1\.1$")
 
 try:
     s = socket.socket(socket.AF_INET,socket.SOCK_STREAM) # vytvor socket
-    s.settimoeout(15.0) # nastav timeout socketu
-    arg_address = ''.join(socket.gethostbyname_ex(socket.gethostname())[2]) # host
+    s.settimeout(15.0) # nastav timeout server socketu
+    #arg_address = ''.join(socket.gethostbyname_ex(socket.gethostname())[2]) # host
+    arg_address = socket.gethostname()     
     arg_port = sys.argv[1] # port
-    s.bind((arg_address, int(arg_port)))
+    s.bind(("127.0.0.1", int(arg_port)))
 except socket.error:
     print("Chyba pri vytvareni socketu.")
 else:
@@ -276,7 +280,7 @@ else:
         try:
             client,address = s.accept() # client = socket na druhe strane, address = tuple ve formatu addr + port druhe strany
             try:
-                _thread.start_new_thread(processing,(client,s,arg_port,arg_address,)) # zaloz nove vlakno s aktualnim klientem
+                _thread.start_new_thread(processing,(client,s,arg_port,arg_address,max_requests,)) # zaloz nove vlakno s aktualnim klientem
             except socket.timeout as e: # timeout error
                 print(e)
             except socket.herror as e: # chyba host
@@ -286,8 +290,10 @@ else:
             except:
                 print("Nelze vytvorit vlakno.")
         # osetri vyjimky
+        except socket.timeout as e: # timeout error
+            continue
         except:
-            print("Chyba socketu.")
+            break
     try:
         s.close() # uzavri socket na strane serveru
     except:
