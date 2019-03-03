@@ -169,13 +169,12 @@ def processing(client,s,arg_port,arg_address, max_requests): # vlakno s klientem
             ## zpracovani keep-alive na strane serveru. Funguje pouze pro linux, pro W a osx ne
             if Keepalive: # pokud je pozadavek na keep-alive nebo HTTP 1.1 automaticky
                 if i == max_requests-1: # posledni mozny zpracovavany request pres tento port, max = 50
-                    conn = "Connection: close\n Date: " + formatdate(timeval=None, localtime=False, usegmt=True) + "\n"
+                    conn = "Connection: close\r\n Date: " + formatdate(timeval=None, localtime=False, usegmt=True) + "\r\n"
                 else:
                     keep(s) # nastav parametry keep alive v linuxu
-                    conn = "Keep-Alive: timeout=15, max=50\nDate: "  + formatdate(timeval=None, localtime=False, usegmt=True) + "\n" # timeout = 5s + 10s max = max pocet spojeni pres socket
-                    # Connection keep alive je pro http 1.1 defaultni, nemusi tu tedy byt
+                    conn = "Connection: keep-alive\r\nKeep-Alive: timeout=15, max=50\r\nDate: "  + formatdate(timeval=None, localtime=False, usegmt=True) + "\r\n" # timeout = 5s + 10s max = max pocet spojeni pres socket
             else:
-                conn = "Connection: close\n Date: " + formatdate(timeval=None, localtime=False, usegmt=True) + "\n"
+                conn = "Connection: close\r\n Date: " + formatdate(timeval=None, localtime=False, usegmt=True) + "\r\n"
                 
             ##### processing vypisu: START #####
             # odchyceni chyb
@@ -205,37 +204,37 @@ def processing(client,s,arg_port,arg_address, max_requests): # vlakno s klientem
                 data = "{ \"typ : " + typ + "\" , \"hodnota : " + data + "\" }"
                 data = json.dumps(data)
                 content_type = "application/json"
-                str_length = "\nContent-Length: " + str(len(data.encode("utf-8")))
+                str_length = "\r\nContent-Length: " + str(len(data.encode("utf-8")))
             else:  # nalezen typ text nebo nebyl nalezen, takze posilam text. Nebo pripad kdy byl nalezen jiny typ nez Json
                 content_type = "text/plain"
-                str_length = "\nContent-Length: " + str(len(data))  # delka dat u text/plain
+                str_length = "\r\nContent-Length: " + str(len(data))  # delka dat u text/plain
 
             ##### processing vypisu: FAKTICKE ODESLANI DAT #####
 
             if not Browser:  # nebylo to browserem (favicon..)
                 if FoundType:  # typ byl nalezen
                     if SomeAccept:  # odesilas 406, spatny typ Accept
-                        outcoming = version + " 406 Not Acceptable\n" + conn + "Content-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
+                        outcoming = version + " 406 Not Acceptable\r\n" + conn + "Content-type:" + content_type + str_length + "\r\n\r\n" + data + '\r\n'
                     elif CpuError or CpuNameError:  # Cpu error load nebo name, odesilas 500
-                        outcoming = version + " 500 Internal Server Error\n" + conn + "Content-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
+                        outcoming = version + " 500 Internal Server Error\r\n" + conn + "Content-type:" + content_type + str_length + "\r\n\r\n" + data + '\r\n'
                     else:  # validni request, odesli 200
                         if RefreshRequest:  # vytvor odpoved s refresh
                             refr_string = "Refresh: " + refresh + ";url=http://" + arg_address + ":" + str(
-                                arg_port) + "/load?refresh=" + refresh + "\n"
+                                arg_port) + "/load?refresh=" + refresh + "\r\n"
                         else:  # vytvor obyc-ejnou odpoved
                             refr_string = ''
-                        outcoming = version + " 200 OK\n" + refr_string + conn + "Content-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
+                        outcoming = version + " 200 OK\r\n" + refr_string + conn + "Content-type:" + content_type + str_length + "\r\n\r\n" + data + '\r\n'
                 else:  # typ nenalezen, jedna se o nevalidni request a resi se chyby
                     if IsRequest:
                         if IsGetRequest:
                             if not FoundType:  # nebyl nalezen typ, ale budes posilat 404 (text nebo JSON)
-                                outcoming = version + " 404 Not Found\n" + conn + "Content-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
+                                outcoming = version + " 404 Not Found\r\n" + conn + "Content-type:" + content_type + str_length + "\r\n\r\n" + data + '\r\n'
                             if not Connection: # spatny radek s Connection, budes posilat 400
-                                outcoming = version + " 400 Bad Request\n" + conn + "Content-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
+                                outcoming = version + " 400 Bad Request\r\n" + conn + "Content-type:" + content_type + str_length + "\r\n\r\n" + data + '\r\n'
                         else:  # je to request ale neni to GET, odesilas 405
-                            outcoming = version + " 405 Method Not Allowed\n" + conn + "Content-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
+                            outcoming = version + " 405 Method Not Allowed\r\n" + conn + "Content-type:" + content_type + str_length + "\r\n\r\n" + data + '\r\n'
                     else:  # neni to request, posli 400
-                        outcoming = version + " 400 Bad Request\n" + conn + "Content-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
+                        outcoming = version + " 400 Bad Request\r\n" + conn + "Content-type:" + content_type + str_length + "\r\n\r\n" + data + '\r\n'
                 client.sendall(outcoming.encode())  # odeslani requestu
     client.close() # uzavreni socketu na strane klienta
 ## zpracovani klienta - END ##
