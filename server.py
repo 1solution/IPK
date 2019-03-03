@@ -9,7 +9,7 @@ import json # prevod data na json objekt
 import _thread # kvuli vlaknum
 from email.utils import formatdate # kvuli casu a datu v http response
 
-max_requests = 3 # maximalni pocet requestu pres jeden socket
+max_requests = 50 # maximalni pocet requestu pres jeden socket
 
 if len(sys.argv) is not 2: # test na pocet argumentu
     print("Spatne argumenty.")
@@ -19,11 +19,11 @@ if not isinstance(port,int) or port < 1024 or port > 65535: # test na port
     print("Spatne cislo portu nebo spatny format cisla portu")
     sys.exit(1)
 
-def keep(s, after_idle_sec=5, interval_sec=2, max_fails=5):
-    s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-    s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, after_idle_sec)
-    s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, interval_sec)
-    s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, max_fails)
+def keep(s): # nastaveni TCP keepalive
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1) # nastav keepalive ON
+    s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 5) # jak dlouho musi byt v necinnosti aby se aktivoval ping
+    s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 2) # interval mezi pingy
+    s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 5) # pocet neuspesnych pingu nez se spojeni uzavre
 
 def getcpu(): # vraci % zatizeni cpu
     curr = re.compile("^CPU MHz:\s*[0-9]+[\,,\.][0-9]+$") # dostan maximum
@@ -47,19 +47,25 @@ def getcpu(): # vraci % zatizeni cpu
     else:
         return '' # neco se rozbilo, 500
 
-
+def cut_body(text): # dostan ven z requestu telo a prazdny radek
+    text2 = []
+    for line in text:
+        if line == '':
+            return text2
+        text2.append(line)
+    return text2
+        
 # zpracovani klienta - START ##
 def processing(client,s,arg_port,arg_address, max_requests): # vlakno s klientem
-
-    print("oteviram nove vlakno..")
             
-    for i in range(3):
+    for i in range(max_requests):
         data = client.recv(1024) # buffer = 1024 default
         if not data:  # neprisla zadna data, socket je zavreny
             break    
            
         if data:
             text = data.decode().split('\r\n')  # obsah requestu v listu
+            text = cut_body(text) # vyhod ven telo requestu
 
             # validacni promenne
             IsRequest = False  # jestli je to vubec request, jestli ne odesli 400
@@ -77,10 +83,12 @@ def processing(client,s,arg_port,arg_address, max_requests): # vlakno s klientem
 
             for line in text:  # validace requestu
                 if re.match(isrequest, line):  # validace jestli se jedna o request
-                    IsRequest = True  # jedna se o request
-                    if re.match(ver_09, line) or re.match(ver_10, line):
-                        Keepalive = False # defaultni connection: close u verze http 0.9 a 1.0
+                    IsRequest = True # jedna se o request
+                    if re.match(ver_10, line):
+                        version = "HTTP/1.0"
+                        Keepalive = False # defaultni connection: close u verze http 1.0
                     elif re.match(ver_11, line):
+                        version = "HTTP/1.1"
                         Keepalive = True # defualtni conenction: keep alive u verze http 1.1
                     if re.match(isgetrequest, line):
                         IsGetRequest = True  # jedna se o request GET
@@ -161,15 +169,12 @@ def processing(client,s,arg_port,arg_address, max_requests): # vlakno s klientem
             ## zpracovani keep-alive na strane serveru. Funguje pouze pro linux, pro W a osx ne
             if Keepalive: # pokud je pozadavek na keep-alive nebo HTTP 1.1 automaticky
                 if i == max_requests-1: # posledni mozny zpracovavany request pres tento port, max = 50
-                    print("Posledni mozny request, pak uzavri socket.")
                     conn = "Connection: close\n Date: " + formatdate(timeval=None, localtime=False, usegmt=True) + "\n"
                 else:
-                    print("Keep-alive, pokracuj v tomto socketu.")
                     keep(s) # nastav parametry keep alive v linuxu
                     conn = "Keep-Alive: timeout=15, max=50\nDate: "  + formatdate(timeval=None, localtime=False, usegmt=True) + "\n" # timeout = 5s + 10s max = max pocet spojeni pres socket
                     # Connection keep alive je pro http 1.1 defaultni, nemusi tu tedy byt
             else:
-                print("Pozadano o connection close, zavri socket.")
                 conn = "Connection: close\n Date: " + formatdate(timeval=None, localtime=False, usegmt=True) + "\n"
                 
             ##### processing vypisu: START #####
@@ -200,10 +205,9 @@ def processing(client,s,arg_port,arg_address, max_requests): # vlakno s klientem
                 data = "{ \"typ : " + typ + "\" , \"hodnota : " + data + "\" }"
                 data = json.dumps(data)
                 content_type = "application/json"
-                str_length = ''  # delku u JSONu neudavat
+                str_length = "\nContent-Length: " + str(len(data.encode("utf-8")))
             else:  # nalezen typ text nebo nebyl nalezen, takze posilam text. Nebo pripad kdy byl nalezen jiny typ nez Json
                 content_type = "text/plain"
-                data = data + '\n'  # pridej novy radek kvuli terminalu
                 str_length = "\nContent-Length: " + str(len(data))  # delka dat u text/plain
 
             ##### processing vypisu: FAKTICKE ODESLANI DAT #####
@@ -211,48 +215,46 @@ def processing(client,s,arg_port,arg_address, max_requests): # vlakno s klientem
             if not Browser:  # nebylo to browserem (favicon..)
                 if FoundType:  # typ byl nalezen
                     if SomeAccept:  # odesilas 406, spatny typ Accept
-                        outcoming = "HTTP/1.1 406 Not Acceptable\n" + conn + "Content-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
+                        outcoming = version + " 406 Not Acceptable\n" + conn + "Content-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
                     elif CpuError or CpuNameError:  # Cpu error load nebo name, odesilas 500
-                        outcoming = "HTTP/1.1 500 Internal Server Error\n" + conn + "Content-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
+                        outcoming = version + " 500 Internal Server Error\n" + conn + "Content-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
                     else:  # validni request, odesli 200
                         if RefreshRequest:  # vytvor odpoved s refresh
                             refr_string = "Refresh: " + refresh + ";url=http://" + arg_address + ":" + str(
                                 arg_port) + "/load?refresh=" + refresh + "\n"
                         else:  # vytvor obyc-ejnou odpoved
                             refr_string = ''
-                        outcoming = "HTTP/1.1 200 OK\n" + refr_string + conn + "Content-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
+                        outcoming = version + " 200 OK\n" + refr_string + conn + "Content-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
                 else:  # typ nenalezen, jedna se o nevalidni request a resi se chyby
                     if IsRequest:
                         if IsGetRequest:
                             if not FoundType:  # nebyl nalezen typ, ale budes posilat 404 (text nebo JSON)
-                                outcoming = "HTTP/1.1 404 Not Found\n" + conn + "Content-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
+                                outcoming = version + " 404 Not Found\n" + conn + "Content-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
                             if not Connection: # spatny radek s Connection, budes posilat 400
-                                outcoming = "HTTP/1.1 400 Bad Request\n" + conn + "Content-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
+                                outcoming = version + " 400 Bad Request\n" + conn + "Content-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
                         else:  # je to request ale neni to GET, odesilas 405
-                            outcoming = "HTTP/1.1 405 Method Not Allowed\n" + conn + "Content-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
+                            outcoming = version + " 405 Method Not Allowed\n" + conn + "Content-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
                     else:  # neni to request, posli 400
-                        outcoming = "HTTP/1.1 400 Bad Request\n" + conn + "Content-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
+                        outcoming = version + " 400 Bad Request\n" + conn + "Content-type:" + content_type + str_length + "\r\n\r\n" + data + '\n'
                 client.sendall(outcoming.encode())  # odeslani requestu
-    print("Zaviram klientsky socket.")
     client.close() # uzavreni socketu na strane klienta
 ## zpracovani klienta - END ##
 
 ## REGEX ##
-# vim ze je jich hodne, ale je to jedinej rozumnej a zaroven spolehlivej zpusob jak zjistit obsah toho http header
 # keep alive connection
 connection = re.compile("^[Cc]onnection:\s*([Kk]eep-alive|[Cc]lose)$") # jestli se jedna o validni radek s conenction
 keepalive = re.compile("^[Cc]onnection:\s*[Kk]eep-[Aa]live$")
 keepclose = re.compile("^[Cc]onnection:\s*[Cc]lose$")
 # re typ pozadavku
-isrequest = re.compile("^(GET|POST|HEAD|PUT|DELETE|CONNECT|OPTION|TRACE) \/\S* HTTP\/(0\.9|1\.0|1\.1)$") # pokud nesedi sablone zadneho requestu, odeslat 400
-isgetrequest = re.compile("^GET \/\S* HTTP\/(0\.9|1\.0|1\.1)$") # musi sedet sablone get requestu, pokud ne odeslat 405
+isrequest = re.compile("^(GET|POST|HEAD|PUT|DELETE|CONNECT|OPTION|TRACE) \/\S* HTTP\/(1\.0|1\.1)$") # pokud nesedi sablone zadneho requestu, odeslat 400
+isgetrequest = re.compile("^GET \/\S* HTTP\/(1\.0|1\.1)$") # musi sedet sablone get requestu, pokud ne odeslat 405
 # jednotlive typy vyhovujici get requestu
-hostname = re.compile("^GET \/hostname HTTP\/(0\.9|1\.0|1\.1)$")
-cpuname = re.compile("^GET \/cpu-name HTTP\/(0\.9|1\.0|1\.1)$")
-load = re.compile("^GET \/load HTTP\/(0\.9|1\.0|1\.1)$")
-loadr = re.compile("^GET \/load\?refresh=[0-9]+ HTTP\/(0\.9|1\.0|1\.1)$")
+hostname = re.compile("^GET \/hostname HTTP\/(1\.0|1\.1)$")
+cpuname = re.compile("^GET \/cpu-name HTTP\/(1\.0|1\.1)$")
+load = re.compile("^GET \/load HTTP\/(1\.0|1\.1)$")
+loadr = re.compile("^GET \/load\?refresh=[123456789][0-9]* HTTP\/(1\.0|1\.1)$")
 # re typ ignore (browser)
-icon = re.compile("^GET \/favicon.ico HTTP\/(0\.9|1\.0|1\.1)$")
+icon = re.compile("^GET \/favicon.ico HTTP\/(1\.0|1\.1)$")
 # re typ accept
 all_accept = re.compile("^[Aa]ccept:\s*\S*\*\/\*\S*$") # ..*/*..
 tp_accept = re.compile("^[Aa]ccept:\s*\S*[Tt]ext\/([Pp]lain|\*)\S*$") # text/* || text/plain
@@ -260,8 +262,7 @@ aj_accept = re.compile("^[Aa]ccept:\s*\S*[Aa]pplication\/([Jj]son|\*)\S*$") # ..
 some_accept = re.compile("^[Aa]ccept:\s*\S+\/\S+$") # jakykoliv dalsi Accept, pokud nebyly nalezeny ty predchozi
 # dec cislo, vyhledani refresh rate v radku
 dec = re.compile("\d+")
-# ruzne verze HTTP
-ver_09 = re.compile("^GET \/\S* HTTP\/0\.9$")
+# ruzne podporovane verze HTTP
 ver_10 = re.compile("^GET \/\S* HTTP\/1\.0$")
 ver_11 = re.compile("^GET \/\S* HTTP\/1\.1$")
 
