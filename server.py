@@ -269,10 +269,9 @@ ver_11 = re.compile("^GET \/\S* HTTP\/1\.1$")
 try:
     s = socket.socket(socket.AF_INET,socket.SOCK_STREAM) # vytvor socket
     s.settimeout(15.0) # nastav timeout server socketu
-    #arg_address = ''.join(socket.gethostbyname_ex(socket.gethostname())[2]) # host
-    arg_address = socket.gethostname()     
+    arg_address = socket.gethostbyname(socket.gethostname()) # host    
     arg_port = sys.argv[1] # port
-    s.bind(("127.0.0.1", int(arg_port)))
+    s.bind((arg_address, int(arg_port)))
 except socket.error:
     print("Chyba pri vytvareni socketu.")
 else:
